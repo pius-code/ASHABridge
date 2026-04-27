@@ -1,6 +1,7 @@
 #include "ASHA.h"
 
 #include <ArduinoJson.h>
+#include <HTTPClient.h>
 #include <WiFi.h>
 
 // WIFI
@@ -55,7 +56,7 @@ std::string ASHA::init(const std::string& ashaID) {
         RegisteredDevice rd = asha_devices.getDevice(i);
 
         JsonObject deviceObj = jsonDevices.add<JsonObject>();
-        deviceObj["id"] = rd.id;
+        deviceObj["device_id"] = rd.id;
         deviceObj["pin"] = rd.pin;
         deviceObj["category"] = rd.deviceType.category;
         deviceObj["type"] = rd.deviceType.type;
@@ -68,5 +69,35 @@ std::string ASHA::init(const std::string& ashaID) {
     Serial.println("--- Generated ASHA Payload ---");
     Serial.println(payload.c_str());
     Serial.println("------------------------------");
+
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+        WiFiClient client;
+
+        Serial.println("ASHA: Payload ready to be sent to the cloud.");
+        http.begin(
+            client,
+            "http://230d-154-161-30-38.ngrok-free.app/api/v1/asha/verify_and_register_device");
+
+        http.addHeader("Content-Type", "application/json");
+        http.addHeader("ngrok-skip-browser-warning", "69420");
+
+        int httpResponseCode = http.POST(String(payload.c_str()));
+
+        if (httpResponseCode > 0) {
+            Serial.print("HTTP Response code: ");
+            Serial.println(httpResponseCode);
+            String response = http.getString();
+            Serial.println(response);
+        } else {
+            Serial.print("Error sending request. Error code: ");
+            Serial.println(httpResponseCode);
+        }
+
+        http.end();
+
+    } else {
+        Serial.println("ASHA: Not connected to WiFi. Cannot send payload.");
+    }
     return payload;
 }
