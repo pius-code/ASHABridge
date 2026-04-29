@@ -1,5 +1,14 @@
 // you wrote separate classes, in future please put it in one class
+#include <PubSubClient.h>
+#include <WiFi.h>
+
 #include <string>
+
+enum class DeviceCategory { Actuator, Sensor };
+
+enum class BusType { Digital, PWM, Analog, I2C, SPI };
+
+enum class DeviceComponent { LED, Motor, LCD, OLED, Buzzer, PiezoSensor };
 
 // WIFI
 class ASHA_WIFI {
@@ -13,10 +22,10 @@ class ASHA_WIFI {
 
 // the structure that holds the information for a device type
 struct DeviceType {
-    std::string category;  // Actuator or Sensor
-    std::string type;      // LED or Motor
-    std::string metadata;  // "My porch fan"
-    std::string DorA;      // digital or analog
+    DeviceCategory category;  // Actuator or Sensor
+    DeviceComponent type;     // LED or Motor
+    std::string metadata;     // "My porch fan"
+    BusType bus;              // digital or analog or I2C or PWM
 };
 
 // the structure-type that holds all registereddevices like sensor etc
@@ -29,7 +38,7 @@ struct RegisteredDevice {
 // ACTUATORS
 class ASHA_Actuators {
    public:
-    DeviceType LED(const std::string& metadata, const std::string& DorA);
+    DeviceType LED(const std::string& metadata, BusType bus);
 };
 
 // ADDING_DEVICE_CONNECTION
@@ -54,4 +63,16 @@ class ASHA {
     ASHA_WIFI asha_wifi;
     ASHA_Devices asha_devices;
     std::string init(const std::string& ashaID);
+    DeviceType genericDev(DeviceCategory deviceCategory, DeviceComponent deviceComponent,
+                          const std::string& metadata, BusType busType);
+    void run();
+    void reconnectMQTT();
+
+   private:
+    WiFiClient espClient;
+    PubSubClient mqttClient;
+    std::string currentAshaID;
+
+    void reconnectMQTT();
+    static void mqttCallback(char* topic, byte* payload, unsigned int length);
 };
