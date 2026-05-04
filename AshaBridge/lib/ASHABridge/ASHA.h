@@ -1,14 +1,14 @@
 // you wrote separate classes, in future please put it in one class
+#include <ArduinoJson.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 
 #include <string>
 
 enum class DeviceCategory { Actuator, Sensor };
 
 enum class BusType { Digital, PWM, Analog, I2C, SPI };
-
-enum class DeviceComponent { LED, Motor, LCD, OLED, Buzzer, PiezoSensor };
 
 // WIFI
 class ASHA_WIFI {
@@ -23,7 +23,6 @@ class ASHA_WIFI {
 // the structure that holds the information for a device type
 struct DeviceType {
     DeviceCategory category;  // Actuator or Sensor
-    DeviceComponent type;     // LED or Motor
     std::string metadata;     // "My porch fan"
     BusType bus;              // digital or analog or I2C or PWM
 };
@@ -63,15 +62,17 @@ class ASHA {
     ASHA_WIFI asha_wifi;
     ASHA_Devices asha_devices;
     std::string init(const std::string& ashaID);
-    DeviceType genericDev(DeviceCategory deviceCategory, DeviceComponent deviceComponent,
-                          const std::string& metadata, BusType busType);
+    DeviceType genericDev(DeviceCategory deviceCategory, const std::string& metadata,
+                          BusType busType);
     void run();
-    void reconnectMQTT();
+
+    static void handleCommand(JsonVariant doc);
 
    private:
     WiFiClient espClient;
     PubSubClient mqttClient;
     std::string currentAshaID;
+    unsigned long lastReconnectAttempt = 0;
 
     void reconnectMQTT();
     static void mqttCallback(char* topic, byte* payload, unsigned int length);

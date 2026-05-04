@@ -39,3 +39,5 @@ for UART
 
 we currently are using the free hiveMQTT broker, meaning that everyone can subscribe to our server and see the unique ID
 -- what we can do is encrypt the ID on both the publisher and subscriber to ensure that even if someone gets it, its not the same
+
+currenly esp32 has 320KB of ram , our mqtt is set to receive 16kb of message(plenty for now) but could be a limit in the future if agent sends large commands, we dont want to have a very large payload because we may need to pass that same payload into the handleCommand if its huge it could eat up the the ram and other function wouldnt run, also we have a delay in there which stops the cpu, means wwhile we have a delay command being run, if the agent sends another command it will not run
