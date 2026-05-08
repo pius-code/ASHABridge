@@ -74,11 +74,9 @@ int lua_sleep(lua_State* L) {
     return 0;
 }
 
-static const luaL_Reg ashalib[] = {{"command", lua_ashaCommand},
-                                   {"analogRead", lua_analogRead},
-                                   {"digitalRead", lua_digitalRead},
-                                   {"ledcRead", lua_ledcRead},
-                                   {nullptr, nullptr}};
+static const luaL_Reg ashalib[] = {
+    {"command", lua_ashaCommand}, {"analogRead", lua_analogRead}, {"digitalRead", lua_digitalRead},
+    {"ledcRead", lua_ledcRead},   {"sleep", lua_sleep},           {nullptr, nullptr}};
 
 int luaopen_asha(lua_State* L) {
     luaL_newlib(L, ashalib);
