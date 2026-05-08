@@ -1,51 +1,204 @@
-so the wifi connect can take a call back function to do something, currently in the main.cpp it prints to terminal
+# ASHABridge Documentation
 
-in future we want to use one big class called ASHA and have the smaller subclasses in there, GEmini says that is better
+## Overview
 
-The challenege now is how to trigger a change from the dashboard easily
-you may want to just add a pin and auto let the AI control it without writing another line of code(although we have this)
+ASHABridge is an ESP32 firmware library that connects IoT devices to an AI agent via MQTT. The agent can control hardware pins, run batch commands, and execute real-time Lua scripts — all without reflashing the device.
 
-There is this challenge where the IoT device cant send to secure servers like HTTPS
+---
 
-problem: [Why is this happening?
-By default, the standard HTTPClient http; is designed for unencrypted http:// traffic.
+## Architecture
 
-When you give it an https:// string (like your ngrok URL), it silently switches under the hood to try and do a secure handshake. However, strict modern servers (like ngrok) often refuse the connection if the ESP32 doesn't provide a root SSL security certificate to prove it knows who it's talking to, or if you don't explicitly tell the ESP32 to skip certificate verification.
-]
-This raises secuirty concerns, so in future we must find a way of enforcing a TLS for extra security between our server and esp32
+### Classes
 
-I am thinking two ways of controlling
+- `ASHA` — the main class. Owns WiFi, MQTT, Lua runtime, and device registry.
+- `ASHA_WIFI` — handles WiFi connection and exposes an `onConnect` callback.
+- `ASHA_Devices` — holds registered devices (pin, bus type, category, metadata).
+- `ASHA_Actuators` — convenience factory for common actuator types (e.g. LED).
 
-1. the agent can send commands at its own discretion individually
-2. the agent can create workflows for speed... with this it sort of sends commands to the esp32 that is flashed in a certain part of memory and this will trigger it run everytime without agent itslef triggering the command
+> Future: merge subclasses into one unified `ASHA` class.
 
-should the case of a user wanting to change the output or input or pinNumber we can just say reassign to prevent the user from reflashing the entire codes(this will happen if the user doesn't remember the codes )
+### Core Assignment (FreeRTOS)
 
-format that the agent should send
-for digital
-{"pin": 18, "action": "digital", "value": 1}
+| Core   | Responsibility                                              |
+| ------ | ----------------------------------------------------------- |
+| Core 1 | Arduino `loop()`, MQTT client, WiFi stack                   |
+| Core 0 | Lua task — sleeps on `portMAX_DELAY` until a script arrives |
 
-for pwm
-{"pin": 18, "action": "pwm", "channel": 0, "freq": 50, "duty": 4915}
+The Lua task runs at priority 1 (low). MQTT and WiFi run at higher priorities — this is intentional. If the Lua task starved the MQTT loop, the WiFi would drop and Lua would never receive new scripts.
 
-for I2C
-{"pin": 21, "action": "i2c_write", "addr": 60, "reg": 0, "data": [174]}
+### Static Instance Pattern
 
-for SPI
-{"action": "spi_write", "cs_pin": 5, "speed": 25000000, "mode": 0, "data": [1, 2, 3]}
+`handleCommand` and `mqttCallback` are `static` because C callback pointers cannot be member functions (they have no `this`). To access instance members from these static functions, `ASHA` stores a pointer to itself:
 
-for UART
-{"action": "uart_write", "baud": 9600, "tx_pin": 17, "rx_pin": 16, "data": "AT+CREG?\r\n"}
+```cpp
+static ASHA* instance;  // set to `this` at the start of init()
+```
 
-we currently are using the free hiveMQTT broker, meaning that everyone can subscribe to our server and see the unique ID
--- what we can do is encrypt the ID on both the publisher and subscriber to ensure that even if someone gets it, its not the same
+---
 
-currenly esp32 has 320KB of ram , our mqtt is set to receive 16kb of message(plenty for now) but could be a limit in the future if agent sends large commands, we dont want to have a very large payload because we may need to pass that same payload into the handleCommand if its huge it could eat up the the ram and other function wouldnt run, also we have a delay in there which stops the cpu, means wwhile we have a delay command being run, if the agent sends another command it will not run
+## Command Format (MQTT)
 
-parts of the code I dont understand:
-the part were we are using the instacnce of the asha to access the asha so that we can acess the handleCpmmand because it is static
+The agent publishes JSON to `asha/commands/<device_id>`.
 
-Another challenge experienced is when the realtime engine(Lua) is working because it is running a heavy intensive task(like while loop or delay) in the same thread as MQTT it drops the connection, this disables wifi, and drops MQTT connection to server so we moved it to run on core 0 and let the mqtt etc run on core 1
-so with the way it works the core 0 is sleeping, using the (portMAX_DELAY) until something happens(a string arrives)... its currently set to priority 1 and not 0 because the MQTT and wifi are the higher priority if the realtime engine starves the MQTT or the wifi drops then the realtime engine may not even receive its tasks in the first place
+### Digital
 
-also the race condition where the the agent might be controlling the same hardware in mqtt and lua- solved by giving a unified database to the agent so that it can check whats running and stop it or warn the user.
+```json
+{ "pin": 18, "action": "digital", "value": 1 }
+```
+
+Set `value` to `-1` to read the pin instead of writing.
+
+### PWM
+
+```json
+{ "pin": 18, "action": "pwm", "channel": 0, "freq": 5000, "duty": 65535 }
+```
+
+### I2C Write
+
+```json
+{ "pin": 21, "action": "i2c_write", "addr": 60, "reg": 0, "data": [174] }
+```
+
+### I2C Read
+
+```json
+{ "action": "i2c_read", "addr": 60, "reg": 0, "len": 6 }
+```
+
+### SPI Write
+
+```json
+{
+  "action": "spi_write",
+  "cs_pin": 5,
+  "speed": 25000000,
+  "mode": 0,
+  "data": [1, 2, 3]
+}
+```
+
+### UART Write
+
+```json
+{
+  "action": "uart_write",
+  "baud": 9600,
+  "tx_pin": 17,
+  "rx_pin": 16,
+  "data": "AT+CREG?\r\n"
+}
+```
+
+### Batch (multiple commands in sequence)
+
+```json
+{
+  "action": "batch",
+  "commands": [
+    { "pin": 18, "action": "digital", "value": 1 },
+    { "delay_ms": 2000 },
+    { "pin": 18, "action": "digital", "value": 0 }
+  ]
+}
+```
+
+### Non-blocking Delay (use inside batch)
+
+```json
+{ "delay_ms": 2000 }
+```
+
+The delay uses `millis()` internally and keeps calling `mqttClient.loop()` every 10ms so MQTT stays alive during the wait.
+
+### Lua Script
+
+```json
+{
+  "action": "lua",
+  "script": "asha.command('{\"pin\": 18, \"action\": \"digital\", \"value\": 1}')"
+}
+```
+
+The script runs on Core 0. See the Lua section below.
+
+---
+
+## Lua Scripting
+
+The agent can send real-time Lua scripts that run persistent logic on the device — conditions, loops, decisions — without reflashing.
+
+### How it works
+
+1. Agent sends `{"action": "lua", "script": "..."}` over MQTT.
+2. `mqttCallback` (Core 1) `strdup`s the script onto the heap and pushes it into a FreeRTOS queue.
+3. `luaTask` (Core 0) wakes up, runs the script, then frees the heap copy.
+
+### Available Lua functions
+
+| Lua call                | What it does                                  |
+| ----------------------- | --------------------------------------------- |
+| `asha.command(jsonStr)` | Runs any command JSON through `handleCommand` |
+| `asha.digitalRead(pin)` | Returns 0 or 1                                |
+| `asha.analogRead(pin)`  | Returns 0–4095                                |
+| `print(...)`            | Prints to Serial                              |
+| `millis()`              | Returns uptime in milliseconds                |
+
+### Example script
+
+```lua
+local btn = asha.digitalRead(21)
+if btn == 1 then
+  asha.command('{"action": "batch", "commands": [{"pin": 18, "action": "digital", "value": 0}, {"pin": 20, "action": "digital", "value": 1}]}')
+else
+  asha.command('{"pin": 18, "action": "digital", "value": 1}')
+end
+```
+
+### Lua limitations
+
+- Blocking `while` loops in Lua are safe for MQTT (Core 0 is isolated) but prevent the Lua task from receiving new scripts until the loop exits.
+- No raw C++/Arduino code — the agent writes Lua and calls `asha.command()` for hardware.
+
+---
+
+## Memory
+
+| Resource            | Size    | Notes                          |
+| ------------------- | ------- | ------------------------------ |
+| ESP32 RAM           | 320 KB  | Total                          |
+| MQTT receive buffer | 16 KB   | Set via `setBufferSize`        |
+| Lua task stack      | 10 KB   | Heap-allocated by FreeRTOS     |
+| Lua script queue    | 5 slots | Each slot is a `char*` pointer |
+
+Payloads over 16 KB will be silently dropped by PubSubClient.
+
+---
+
+## Known Issues & Future Work
+
+### Security
+
+- **HTTPS not working**: `HTTPClient` without a root SSL certificate fails against strict servers (e.g. ngrok). The ESP32 needs either a pinned certificate or explicit `setInsecure()`. Needs a proper TLS solution before production.
+- **MQTT topic is public**: The free broker allows anyone to subscribe to `asha/commands/<id>`. Mitigation: encrypt/hash the device ID on both publisher and subscriber so intercepted IDs are useless.
+
+### Race condition on shared pins
+
+If the agent sends both a direct MQTT command and a Lua script targeting the same pin simultaneously, both cores call `handleCommand` at the same time — undefined behavior on hardware. Planned fix: a unified pin-ownership database the agent checks before sending commands, so it knows which pins are under Lua control vs direct MQTT control.
+
+### WiFi callback
+
+`ASHA_WIFI::onConnect` accepts a user-defined callback that fires after connection. Currently used to print to Serial in `main.cpp`.
+
+### Pin reassignment
+
+If a user forgets their pin configuration, they can reassign pins via agent command without reflashing — the device registry in `ASHA_Devices` supports this at runtime.
+
+### Agent control modes
+
+Two control modes are planned:
+
+1. **Direct** — agent sends individual commands on demand.
+   useful when you just want to control a device one time like turn off the light or do something
+2. **Lua** — agent sends a persistent script that runs on Core 0 indefinitely, reacting to sensor inputs without needing the agent online., useful for realtime
+3. **workflow** - runs in the cloud, using for when you want timed tasks, like every 5 minutes check a sensor / turn on the light everyday at 6am and turn it off at 7pm..

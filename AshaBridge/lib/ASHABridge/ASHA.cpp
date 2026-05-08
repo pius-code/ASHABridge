@@ -240,7 +240,9 @@ std::string ASHA::init(const std::string& ashaID) {
 
     // LUA -------------------------------------------------------------------------------
     ashaLua.addModule("asha", luaopen_asha);
-    xTaskCreatePinnedToCore(luaTask, "luaTask", 8192, this, 1, nullptr, 0);
+    luaScriptQueue = xQueueCreate(5, sizeof(char*));
+
+    xTaskCreatePinnedToCore(luaTask, "luaTask", 10 * 1024, this, 1, nullptr, 0);
     // ------------------------------------------------------------------------------------
 
     return payload;
