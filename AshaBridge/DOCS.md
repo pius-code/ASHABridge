@@ -41,3 +41,11 @@ we currently are using the free hiveMQTT broker, meaning that everyone can subsc
 -- what we can do is encrypt the ID on both the publisher and subscriber to ensure that even if someone gets it, its not the same
 
 currenly esp32 has 320KB of ram , our mqtt is set to receive 16kb of message(plenty for now) but could be a limit in the future if agent sends large commands, we dont want to have a very large payload because we may need to pass that same payload into the handleCommand if its huge it could eat up the the ram and other function wouldnt run, also we have a delay in there which stops the cpu, means wwhile we have a delay command being run, if the agent sends another command it will not run
+
+parts of the code I dont understand:
+the part were we are using the instacnce of the asha to access the asha so that we can acess the handleCpmmand because it is static
+
+Another challenge experienced is when the realtime engine(Lua) is working because it is running a heavy intensive task(like while loop or delay) in the same thread as MQTT it drops the connection, this disables wifi, and drops MQTT connection to server so we moved it to run on core 0 and let the mqtt etc run on core 1
+so with the way it works the core 0 is sleeping, using the (portMAX_DELAY) until something happens(a string arrives)... its currently set to priority 1 and not 0 because the MQTT and wifi are the higher priority if the realtime engine starves the MQTT or the wifi drops then the realtime engine may not even receive its tasks in the first place
+
+also the race condition where the the agent might be controlling the same hardware in mqtt and lua- solved by giving a unified database to the agent so that it can check whats running and stop it or warn the user.

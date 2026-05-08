@@ -18,6 +18,10 @@ void setup() {
     asha.asha_devices.addDevice(
         asha.genericDev(DeviceCategory::Actuator, "RED LED", BusType::Digital), 19);
     asha.init("17fdab2c-1140-40e9-9572-16f802eb3b5e");
+
+    Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
+    Serial.printf("Chip model: %s\n", ESP.getChipModel());
+    Serial.printf("Flash size: %d MB\n", ESP.getFlashChipSize() / 1024 / 1024);
 }
 
 void loop() {

@@ -1,5 +1,6 @@
 // you wrote separate classes, in future please put it in one class
 #include <ArduinoJson.h>
+#include <Lua.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -73,6 +74,10 @@ class ASHA {
     PubSubClient mqttClient;
     std::string currentAshaID;
     unsigned long lastReconnectAttempt = 0;
+    static ASHA* instance;
+    Lua ashaLua;
+    QueueHandle_t luaScriptQueue;
+    static void luaTask(void* param);
 
     void reconnectMQTT();
     static void mqttCallback(char* topic, byte* payload, unsigned int length);

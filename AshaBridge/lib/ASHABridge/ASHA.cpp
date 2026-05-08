@@ -2,9 +2,76 @@
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <Lua.h>
 #include <SPI.h>
 #include <WiFi.h>
 #include <Wire.h>
+
+#include <lua/lua.hpp>
+
+ASHA* ASHA::instance = nullptr;
+
+// Lua_asha
+//---------------------------------------------------------------------------------------
+
+static int lua_ashaCommand(lua_State* L) {
+    const char* raw_command = luaL_checkstring(L, 1);
+    JsonDocument doc;
+    DeserializationError error = deserializeJson(doc, raw_command);
+    // TODO: the error here fails silenty, print it out so that we know whats wrong
+    if (!error) {
+        String action = doc["action"];
+
+        if (action == "batch") {
+            JsonArray commands = doc["commands"];
+            for (JsonVariant cmd : commands) {
+                ASHA::handleCommand(cmd);
+            }
+        } else {
+            ASHA::handleCommand(doc.as<JsonVariant>());
+        }
+    }
+    return 0;
+}
+
+static int lua_digitalWrite(lua_State* L) {
+    int pin = luaL_checkinteger(L, 1);
+    int value = luaL_checkinteger(L, 2);
+    digitalWrite(pin, value);
+    return 0;
+}
+
+int lua_digitalRead(lua_State* L) {
+    int pin = luaL_checkinteger(L, 1);
+    int val = digitalRead(pin);
+    lua_pushinteger(L, val);
+    return 1;
+}
+
+int lua_delay(lua_State* L) {
+    int ms = luaL_checkinteger(L, 1);
+    delay(ms);
+    return 0;
+}
+
+int lua_analogRead(lua_State* L) {
+    int pin = luaL_checkinteger(L, 1);
+    int val = analogRead(pin);
+    lua_pushinteger(L, val);
+    return 1;
+}
+
+static const luaL_Reg ashalib[] = {{"command", lua_ashaCommand},
+                                   {"analogRead", lua_analogRead},
+                                   {"digitalRead", lua_digitalRead},
+                                   {nullptr, nullptr}};
+
+int luaopen_asha(lua_State* L) {
+    luaL_newlib(L, ashalib);
+    return 1;
+}
+
+//--------------------------------------------------------------------------------------
 
 // WIFI
 void ASHA_WIFI::onConnect(void (*userdefinedfunc)()) {
@@ -62,6 +129,7 @@ DeviceType ASHA::genericDev(DeviceCategory deviceCategory, const std::string& me
 }
 
 std::string ASHA::init(const std::string& ashaID) {
+    instance = this;
     JsonDocument doc;
 
     doc["auth_id"] = ashaID;
@@ -140,7 +208,7 @@ std::string ASHA::init(const std::string& ashaID) {
         Serial.println("ASHA: Payload ready to be sent to the cloud.");
         http.begin(
             client,
-            "http://69b8-154-161-1-38.ngrok-free.app/api/v1/asha/verify_and_register_device");
+            "http://1f47-154-161-35-97.ngrok-free.app/api/v1/asha/verify_and_register_device");
 
         http.addHeader("Content-Type", "application/json");
         http.addHeader("ngrok-skip-browser-warning", "69420");
@@ -165,10 +233,15 @@ std::string ASHA::init(const std::string& ashaID) {
     Serial.println("ASHA: Setting up MQTT connection ...");
 
     mqttClient.setClient(espClient);
-    mqttClient.setServer("10.151.236.41", 1883);
+    mqttClient.setServer("10.91.232.41", 1883);
     mqttClient.setBufferSize(16 * 1024);
     mqttClient.setCallback(mqttCallback);
     currentAshaID = ashaID;
+
+    // LUA -------------------------------------------------------------------------------
+    ashaLua.addModule("asha", luaopen_asha);
+    xTaskCreatePinnedToCore(luaTask, "luaTask", 8192, this, 1, nullptr, 0);
+    // ------------------------------------------------------------------------------------
 
     return payload;
 }
@@ -176,7 +249,11 @@ std::string ASHA::init(const std::string& ashaID) {
 void ASHA::handleCommand(JsonVariant doc) {
     if (doc.containsKey("delay_ms")) {
         int delayTime = doc["delay_ms"];
-        delay(delayTime);
+        unsigned long start = millis();
+        while (millis() - start < delayTime) {
+            delay(10);
+            if (instance) instance->mqttClient.loop();
+        }
         Serial.printf("Delayed for %d ms\n", delayTime);
         return;
     }
@@ -295,8 +372,23 @@ void ASHA::mqttCallback(char* topic, byte* payload, unsigned int length) {
             for (JsonVariant cmd : commands) {
                 handleCommand(cmd);
             }
+        } else if (action == "lua") {
+            std::string script = doc["script"];
+            char* copy = strdup(script.c_str());
+            xQueueSend(instance->luaScriptQueue, &copy, 0);
         } else {
             handleCommand(doc.as<JsonVariant>());
+        }
+    }
+}
+
+void ASHA::luaTask(void* param) {
+    ASHA* self = (ASHA*)param;
+    while (true) {
+        char* script;
+        if (xQueueReceive(self->luaScriptQueue, &script, portMAX_DELAY) == pdTRUE) {
+            self->ashaLua.run(script);
+            free(script);
         }
     }
 }
