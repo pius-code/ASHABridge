@@ -61,9 +61,23 @@ int lua_analogRead(lua_State* L) {
     return 1;
 }
 
+int lua_ledcRead(lua_State* L) {
+    int channel = luaL_checkinteger(L, 1);
+    int duty = ledcRead(channel);
+    lua_pushinteger(L, duty);
+    return 1;
+}
+
+int lua_sleep(lua_State* L) {
+    int ms = luaL_checkinteger(L, 1);
+    vTaskDelay(pdMS_TO_TICKS(ms));
+    return 0;
+}
+
 static const luaL_Reg ashalib[] = {{"command", lua_ashaCommand},
                                    {"analogRead", lua_analogRead},
                                    {"digitalRead", lua_digitalRead},
+                                   {"ledcRead", lua_ledcRead},
                                    {nullptr, nullptr}};
 
 int luaopen_asha(lua_State* L) {
@@ -208,7 +222,7 @@ std::string ASHA::init(const std::string& ashaID) {
         Serial.println("ASHA: Payload ready to be sent to the cloud.");
         http.begin(
             client,
-            "http://1f47-154-161-35-97.ngrok-free.app/api/v1/asha/verify_and_register_device");
+            "http://ea43-154-161-11-173.ngrok-free.app/api/v1/asha/verify_and_register_device");
 
         http.addHeader("Content-Type", "application/json");
         http.addHeader("ngrok-skip-browser-warning", "69420");
@@ -233,7 +247,7 @@ std::string ASHA::init(const std::string& ashaID) {
     Serial.println("ASHA: Setting up MQTT connection ...");
 
     mqttClient.setClient(espClient);
-    mqttClient.setServer("10.91.232.41", 1883);
+    mqttClient.setServer("10.63.64.41", 1883);
     mqttClient.setBufferSize(16 * 1024);
     mqttClient.setCallback(mqttCallback);
     currentAshaID = ashaID;

@@ -155,10 +155,59 @@ else
 end
 ```
 
+### Real-world use cases
+
+#### Monitoring a PWM-controlled device (e.g. LED or motor)
+
+A common scenario: turn on a device at full brightness via PWM, then send a Lua script that watches for when it turns off and triggers a reaction (alarm, beep, fallback action).
+
+This works because of how PWM duty cycle maps to pin state. In `handleCommand`, the PWM resolution is 13 bits and the duty is written as:
+
+```cpp
+ledcSetup(channel, freq, 13);  // 13-bit resolution, max value = 8191
+ledcWrite(channel, duty >> 3); // duty divided by 8 before writing
+```
+
+At full brightness (`duty = 65535 → 65535 >> 3 = 8191`), the duty cycle is 100% — the pin is **always HIGH**. `digitalRead` reliably returns 1.
+
+When the device turns off (`duty = 0` or a digital 0 command), the pin is **always LOW**. `digitalRead` reliably returns 0.
+
+So `digitalRead` works correctly at the extremes (full on / full off). The only unreliable case is intermediate brightness (e.g. 50% duty), where the pin genuinely toggles and `digitalRead` could catch it either way.
+
+```lua
+-- runs on Core 0, watching pin 18
+-- when the LED turns off, beep the buzzer on pin 25 every 10 seconds
+while true do
+  local led = asha.digitalRead(18)
+  if led == 0 then
+    asha.command('{"action": "batch", "commands": [{"pin": 25, "action": "digital", "value": 1}, {"delay_ms": 200}, {"pin": 25, "action": "digital", "value": 0}, {"delay_ms": 9800}]}')
+  end
+end
+```
+
+#### Sensor threshold monitoring (e.g. heart rate, temperature)
+
+For analog sensors, use `asha.analogRead()` on an ADC-capable pin (GPIO 32–39 on ESP32). If the reading drops below a threshold — sensor disconnected, patient removed, abnormal reading — trigger an alarm immediately.
+
+```lua
+while true do
+  local bpm = asha.analogRead(34)
+  if bpm < 300 then
+    asha.command('{"pin": 25, "action": "digital", "value": 1}')  -- alarm on
+  else
+    asha.command('{"pin": 25, "action": "digital", "value": 0}')  -- alarm off
+  end
+end
+```
+
+Note: `analogRead` only works on ADC-capable pins. Calling it on a non-ADC pin (e.g. GPIO 18) returns garbage.
+
 ### Lua limitations
 
 - Blocking `while` loops in Lua are safe for MQTT (Core 0 is isolated) but prevent the Lua task from receiving new scripts until the loop exits.
 - No raw C++/Arduino code — the agent writes Lua and calls `asha.command()` for hardware.
+- `digitalRead` on a PWM pin is only reliable at full on (100% duty) or full off (0% duty). Intermediate brightness levels will give inconsistent readings.
+- `analogRead` only works on GPIO 32–39. Do not call it on digital-only pins.
 
 ---
 
@@ -172,6 +221,20 @@ end
 | Lua script queue    | 5 slots | Each slot is a `char*` pointer |
 
 Payloads over 16 KB will be silently dropped by PubSubClient.
+
+---
+
+## Before Production
+
+### MQTT Silent Dropout (stale TCP connection)
+
+**Symptom:** Commands from the agent never reach the ESP32 unless the device is reflashed. Serial only shows the initial boot connection — nothing after that.
+
+**Root cause:** The ESP32 connects to the broker once at boot and `mqttClient.connected()` caches that state. If the broker machine sleeps, restarts, or the network interrupts, the TCP connection dies silently. The ESP32 still believes it is connected. The agent publishes successfully to the broker, but the ESP32's subscription is gone — nothing arrives.
+
+**Reflashing fixes it** because it forces a fresh TCP connection and re-subscription from scratch.
+
+**Fix needed:** A connection watchdog. If no MQTT message or keepalive ping has been received within a set window (e.g. 2 minutes), force `mqttClient.disconnect()` and reconnect. Do not rely solely on `mqttClient.connected()` — it reflects cached state, not actual socket health.
 
 ---
 
@@ -194,6 +257,26 @@ If the agent sends both a direct MQTT command and a Lua script targeting the sam
 
 If a user forgets their pin configuration, they can reassign pins via agent command without reflashing — the device registry in `ASHA_Devices` supports this at runtime.
 
+### Lua script persistence (not yet implemented)
+
+Lua scripts are stored only in RAM. When the ESP32 reboots, the queue and Lua runtime are wiped — all scripts are lost and must be resent by the agent.
+
+To survive reboots, scripts need to be saved to flash. Two options:
+
+- **NVS** (Non-Volatile Storage) — ESP32's built-in key-value store, good for a single active script per key.
+- **LittleFS** — a small filesystem in flash, better if multiple named scripts need to be stored.
+
+On boot, `init()` would read the saved script(s) from flash and push them into the Lua queue automatically.
+
+### Multiple concurrent Lua scripts
+
+The current architecture has one Lua task (Core 0). Scripts queue and run one after the other. If a script contains a `while true do` infinite loop, it occupies the Lua task permanently — any subsequent script sits in the queue and never runs.
+
+To run two persistent scripts simultaneously (e.g. one monitoring a button, one monitoring a sensor), the options are:
+
+- Spin up multiple Lua tasks, each with its own queue slot.
+- Use Lua coroutines for cooperative multitasking within a single task.
+
 ### Agent control modes
 
 Two control modes are planned:
@@ -202,3 +285,38 @@ Two control modes are planned:
    useful when you just want to control a device one time like turn off the light or do something
 2. **Lua** — agent sends a persistent script that runs on Core 0 indefinitely, reacting to sensor inputs without needing the agent online., useful for realtime
 3. **workflow** - runs in the cloud, using for when you want timed tasks, like every 5 minutes check a sensor / turn on the light everyday at 6am and turn it off at 7pm..
+
+### An actual feedback mechanism - FUTURE WORK
+
+## monitoring PWM pin has an issue since pwm uses frequency to alternate quicky between high and low, if you check for example if low you will get a low..
+
+ecxample probelm: I wanted to check if pin(18) using pwm was on,if off turn the bizzer on, and the agent ised digitalRead but because of rapid frequency(500) it kept buzzing so we used ledcRead instead which reads the hardware Register where the PWM stire the duty value
+but :
+analogRead → measures physical reality (voltage) → unreliable for PWM
+ledcRead → reads a config register → always returns exactly what you set, instantly
+
+if the device is faulty we will never know because we are reading what we set it to.
+
+**the problem is we want to actually know the state of the device, if we say turn on the light, we want to know if the light is actually on, for humans we can just look and know but for a truly autonomous agent it wouldnt know, now we want to check the curremt on the pin to know if the voltage has dropped solutions below**
+The actual hardware solution
+You're right that someone has thought about this. It's called current sensing and voltage feedback and it's done all the time in embedded systems.
+Option 1: ADC on the LED pin
+When an LED is lit, there's a voltage drop across it (~2V for red, ~3.2V for blue/white). The remaining voltage appears at the pin.
+You can't do this directly because the pin is configured as OUTPUT — it's driving the voltage, not reading it. But you can:
+cpp// briefly switch to input, sample, switch back
+pinMode(18, INPUT);
+int voltage = analogRead(18); // read actual voltage
+pinMode(18, OUTPUT);
+The problem — this creates a tiny glitch on the pin. Milliseconds, but the LED flickers. Not ideal but functional.
+Option 2: Voltage divider feedback
+Connect a second wire from the LED's positive leg through a resistor to a separate ADC input pin. That pin reads the actual voltage at the LED, completely independently:
+ESP32 pin 18 → resistor → LED → GND
+↓
+100kΩ to pin 34 (ADC)
+Pin 34 reads the voltage. If LED is on — high voltage. If LED is off or burnt out — near zero. No extra sensor needed, just one resistor and one wire.
+This is how professional embedded systems do feedback sensing without external sensors.
+Option 3: Current mirror
+Even more precise — put a small sense resistor (0.1Ω) in series with the LED. Measure the voltage drop across it via ADC. Ohm's law gives you the current. Current flowing = LED on. No current = LED off or dead.
+ESP32 pin 18 → LED → 0.1Ω sense resistor → GND
+↓
+ADC pin reads voltage drop

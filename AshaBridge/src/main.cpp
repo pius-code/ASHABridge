@@ -17,6 +17,9 @@ void setup() {
         asha.genericDev(DeviceCategory::Actuator, "Green LED", BusType::PWM), 18);
     asha.asha_devices.addDevice(
         asha.genericDev(DeviceCategory::Actuator, "RED LED", BusType::Digital), 19);
+    asha.asha_devices.addDevice(
+        asha.genericDev(DeviceCategory::Actuator, "alarm buzzer", BusType::PWM), 21);
+
     asha.init("17fdab2c-1140-40e9-9572-16f802eb3b5e");
 
     Serial.printf("Free heap: %d bytes\n", ESP.getFreeHeap());
