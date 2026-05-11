@@ -279,6 +279,18 @@ void ASHA::handleCommand(JsonVariant doc) {
         if (value == -1) {
             int reading = digitalRead(pin);
             Serial.printf("Read Pin %d: Digital %d\n", pin, reading);
+            const char* corrID = doc["correlation_id"] | "";
+            if (strlen(corrID) > 0) {
+                JsonDocument response;
+                response["correlation_id"] = corrID;
+                response["pin"] = pin;
+                response["value"] = reading;
+
+                String topic = "asha/response/" + String(instance->currentAshaID.c_str());
+                String payload;
+                serializeJson(response, payload);
+                instance->mqttClient.publish(topic.c_str(), payload.c_str());
+            }
         } else {
             digitalWrite(pin, value);
             Serial.printf("Set Pin %d to Digital %d\n", pin, value);

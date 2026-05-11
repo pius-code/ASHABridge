@@ -2,7 +2,7 @@
 
 ## Overview
 
-ASHABridge is an ESP32 firmware library that connects IoT devices to an AI agent via MQTT. The agent can control hardware pins, run batch commands, and execute real-time Lua scripts — all without reflashing the device.
+ASHABridge is an ESP32 firmware library that connects IoT devices to an AI agent MCP via MQTT. The agent can control hardware pins, run batch commands, and execute real-time Lua scripts — all without reflashing the device.
 
 ---
 
@@ -233,6 +233,7 @@ Payloads over 16 KB will be silently dropped by PubSubClient.
 **Root cause:** The underlying issue was the **WiFi connection dropping**, not MQTT. A phone hotspot silently disconnects idle clients. Once WiFi dropped, `run()` exited early on the WiFi guard before reaching either the watchdog check or the MQTT reconnect — so Serial went completely silent.
 
 **Fix:**
+
 1. Use a laptop or router hotspot instead of a phone hotspot. Phone hotspots silently drop idle devices regardless of keepalive traffic.
 2. `WiFi.reconnect()` is called inside `run()` whenever `WiFi.status() != WL_CONNECTED`, so the ESP32 actively retries the WiFi connection instead of waiting passively.
 3. The MQTT watchdog timer was increased to 30 minutes (`1800000 ms`) to avoid interfering with normal command flow — it is a last-resort safety net, not the primary reconnect mechanism.
