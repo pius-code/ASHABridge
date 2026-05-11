@@ -220,7 +220,7 @@ std::string ASHA::init(const std::string& ashaID) {
         Serial.println("ASHA: Payload ready to be sent to the cloud.");
         http.begin(
             client,
-            "http://ea43-154-161-11-173.ngrok-free.app/api/v1/asha/verify_and_register_device");
+            "http://aa39-154-161-58-101.ngrok-free.app/api/v1/asha/verify_and_register_device");
 
         http.addHeader("Content-Type", "application/json");
         http.addHeader("ngrok-skip-browser-warning", "69420");
@@ -365,6 +365,7 @@ void ASHA::handleCommand(JsonVariant doc) {
 }
 
 void ASHA::mqttCallback(char* topic, byte* payload, unsigned int length) {
+    instance->lastMqttActivity = millis();
     Serial.print("Message arrived on topic: ");
     Serial.println(topic);
 
@@ -417,6 +418,7 @@ void ASHA::reconnectMQTT() {
     clientId += String(random(0xffff), HEX);
     if (mqttClient.connect(clientId.c_str(), "Piusasha", "Piuspius27")) {
         Serial.println("connected to MQTT Broker!");
+        lastMqttActivity = millis();
         String topic = "asha/commands/" + String(currentAshaID.c_str());
         mqttClient.subscribe(topic.c_str());
     } else {
@@ -427,7 +429,16 @@ void ASHA::reconnectMQTT() {
 }
 
 void ASHA::run() {
-    if (WiFi.status() != WL_CONNECTED) return;
+    if (WiFi.status() != WL_CONNECTED) {
+        WiFi.reconnect();
+        Serial.println("ASHA: WiFi down");
+        return;
+    }
+    if (mqttClient.connected() && (millis() - lastMqttActivity > 1800000)) {
+        Serial.println("ASHA: MQTT watchdog — forcing reconnect");
+        mqttClient.disconnect();
+        lastReconnectAttempt = 0;
+    }
     if (!mqttClient.connected()) {
         reconnectMQTT();
     }

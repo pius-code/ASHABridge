@@ -78,6 +78,7 @@ class ASHA {
     Lua ashaLua;
     QueueHandle_t luaScriptQueue;
     static void luaTask(void* param);
+    unsigned long lastMqttActivity = 0;
 
     void reconnectMQTT();
     static void mqttCallback(char* topic, byte* payload, unsigned int length);

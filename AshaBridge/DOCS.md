@@ -226,15 +226,16 @@ Payloads over 16 KB will be silently dropped by PubSubClient.
 
 ## Before Production
 
-### MQTT Silent Dropout (stale TCP connection)
+### MQTT Silent Dropout — FIXED
 
-**Symptom:** Commands from the agent never reach the ESP32 unless the device is reflashed. Serial only shows the initial boot connection — nothing after that.
+**Symptom:** Commands from the agent stopped reaching the ESP32 after 1–2 minutes of inactivity. The MQTT watchdog stopped firing entirely. Reflashing restored it temporarily.
 
-**Root cause:** The ESP32 connects to the broker once at boot and `mqttClient.connected()` caches that state. If the broker machine sleeps, restarts, or the network interrupts, the TCP connection dies silently. The ESP32 still believes it is connected. The agent publishes successfully to the broker, but the ESP32's subscription is gone — nothing arrives.
+**Root cause:** The underlying issue was the **WiFi connection dropping**, not MQTT. A phone hotspot silently disconnects idle clients. Once WiFi dropped, `run()` exited early on the WiFi guard before reaching either the watchdog check or the MQTT reconnect — so Serial went completely silent.
 
-**Reflashing fixes it** because it forces a fresh TCP connection and re-subscription from scratch.
-
-**Fix needed:** A connection watchdog. If no MQTT message or keepalive ping has been received within a set window (e.g. 2 minutes), force `mqttClient.disconnect()` and reconnect. Do not rely solely on `mqttClient.connected()` — it reflects cached state, not actual socket health.
+**Fix:**
+1. Use a laptop or router hotspot instead of a phone hotspot. Phone hotspots silently drop idle devices regardless of keepalive traffic.
+2. `WiFi.reconnect()` is called inside `run()` whenever `WiFi.status() != WL_CONNECTED`, so the ESP32 actively retries the WiFi connection instead of waiting passively.
+3. The MQTT watchdog timer was increased to 30 minutes (`1800000 ms`) to avoid interfering with normal command flow — it is a last-resort safety net, not the primary reconnect mechanism.
 
 ---
 

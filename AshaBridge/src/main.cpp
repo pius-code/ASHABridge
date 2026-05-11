@@ -7,8 +7,8 @@ void afterConnection() {
     Serial.println("ASHA: Internet Connected ");
 }
 
-const char* ssid = "Piusxel";
-const char* password = "voed5056";
+const char* ssid = "ashapius";
+const char* password = "piuspiusy";
 
 void setup() {
     asha.asha_wifi.onConnect(afterConnection);
