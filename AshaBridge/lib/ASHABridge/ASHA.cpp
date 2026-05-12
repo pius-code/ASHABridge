@@ -297,13 +297,31 @@ void ASHA::handleCommand(JsonVariant doc) {
         }
     } else if (action == "pwm") {
         int channel = doc["channel"];
-        int freq = doc["freq"];
-        int duty = doc["duty"];
+        int value = doc["value"] | 0;
 
-        ledcSetup(channel, freq, 13);
-        ledcAttachPin(pin, channel);
-        ledcWrite(channel, duty >> 3);
-        Serial.printf("Set Pin %d to PWM ch:%d freq:%d duty:%d\n", pin, channel, freq, duty);
+        if (value == -1) {
+            int ledc_duty = ledcRead(channel);
+            Serial.printf("Read PWM ch:%d ledc_duty:%d\n", channel, ledc_duty);
+
+            const char* corrID = doc["correlation_id"] | "";
+            if (strlen(corrID) > 0) {
+                JsonDocument response;
+                response["correlation_id"] = corrID;
+                response["pin"] = pin;
+                response["ledc_duty"] = ledc_duty << 3;
+                String topic = "asha/response/" + String(instance->currentAshaID.c_str());
+                String payload;
+                serializeJson(response, payload);
+                instance->mqttClient.publish(topic.c_str(), payload.c_str());
+            }
+        } else {
+            int freq = doc["freq"];
+            int duty = doc["duty"];
+            ledcSetup(channel, freq, 13);
+            ledcAttachPin(pin, channel);
+            ledcWrite(channel, duty >> 3);
+            Serial.printf("Set Pin %d to PWM ch:%d freq:%d duty:%d\n", pin, channel, freq, duty);
+        }
     } else if (action == "i2c_write") {
         int addr = doc["addr"];
         int reg = doc["reg"];
