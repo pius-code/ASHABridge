@@ -204,7 +204,8 @@ Note: `analogRead` only works on ADC-capable pins. Calling it on a non-ADC pin (
 
 ### Lua limitations
 
-- Blocking `while` loops in Lua are safe for MQTT (Core 0 is isolated) but prevent the Lua task from receiving new scripts until the loop exits.
+- **Do not use `while` loops in Lua scripts.** The Lua VM is single-threaded — a `while` loop permanently occupies it, blocking all 5 queue slots. Any subsequent scripts sent by the agent will queue and never execute until the device reboots. For persistent monitoring logic, use the `batch` action with `delay_ms` from the agent side, or keep Lua scripts short and one-shot.
+- Only one Lua script runs at a time. Non-looping scripts (read a sensor, fire a command, return) work correctly — they finish and the next queued script runs.
 - No raw C++/Arduino code — the agent writes Lua and calls `asha.command()` for hardware.
 - `digitalRead` on a PWM pin is only reliable at full on (100% duty) or full off (0% duty). Intermediate brightness levels will give inconsistent readings.
 - `analogRead` only works on GPIO 32–39. Do not call it on digital-only pins.
@@ -272,12 +273,9 @@ On boot, `init()` would read the saved script(s) from flash and push them into t
 
 ### Multiple concurrent Lua scripts
 
-The current architecture has one Lua task (Core 0). Scripts queue and run one after the other. If a script contains a `while true do` infinite loop, it occupies the Lua task permanently — any subsequent script sits in the queue and never runs.
+The current architecture has one Lua task (Core 0) and one Lua VM. Scripts queue and run one after the other. This is intentional — each parallel Lua VM would require its own heap allocation, and shared hardware resources (LEDC channels, `mqttClient`) are not protected by a mutex, so concurrent access would cause race conditions.
 
-To run two persistent scripts simultaneously (e.g. one monitoring a button, one monitoring a sensor), the options are:
-
-- Spin up multiple Lua tasks, each with its own queue slot.
-- Use Lua coroutines for cooperative multitasking within a single task.
+**Design decision:** `while` loops in Lua scripts are an unsupported pattern. Scripts are expected to be short and one-shot. For persistent device monitoring, use the agent-side workflow control mode instead.
 
 ### Agent control modes
 
@@ -288,37 +286,47 @@ Two control modes are planned:
 2. **Lua** — agent sends a persistent script that runs on Core 0 indefinitely, reacting to sensor inputs without needing the agent online., useful for realtime
 3. **workflow** - runs in the cloud, using for when you want timed tasks, like every 5 minutes check a sensor / turn on the light everyday at 6am and turn it off at 7pm..
 
-### An actual feedback mechanism - FUTURE WORK
+### Sensor Reading — Implemented
 
-## monitoring PWM pin has an issue since pwm uses frequency to alternate quicky between high and low, if you check for example if low you will get a low..
+The feedback mechanism is now implemented for Digital and PWM buses via MQTT request-response.
 
-ecxample probelm: I wanted to check if pin(18) using pwm was on,if off turn the bizzer on, and the agent ised digitalRead but because of rapid frequency(500) it kept buzzing so we used ledcRead instead which reads the hardware Register where the PWM stire the duty value
-but :
-analogRead → measures physical reality (voltage) → unreliable for PWM
-ledcRead → reads a config register → always returns exactly what you set, instantly
+**How it works:**
 
-if the device is faulty we will never know because we are reading what we set it to.
+1. Agent publishes a read command to `asha/commands/<device_id>` with `value: -1` and a `correlation_id`
+2. ESP32 reads the pin/channel and publishes the result to `asha/response/<device_id>`
+3. Python server waits up to 5 seconds for the response, matched by `correlation_id`
+4. Agent receives the reading and interprets it
 
-**the problem is we want to actually know the state of the device, if we say turn on the light, we want to know if the light is actually on, for humans we can just look and know but for a truly autonomous agent it wouldnt know, now we want to check the curremt on the pin to know if the voltage has dropped solutions below**
-The actual hardware solution
-You're right that someone has thought about this. It's called current sensing and voltage feedback and it's done all the time in embedded systems.
-Option 1: ADC on the LED pin
-When an LED is lit, there's a voltage drop across it (~2V for red, ~3.2V for blue/white). The remaining voltage appears at the pin.
-You can't do this directly because the pin is configured as OUTPUT — it's driving the voltage, not reading it. But you can:
-cpp// briefly switch to input, sample, switch back
-pinMode(18, INPUT);
-int voltage = analogRead(18); // read actual voltage
-pinMode(18, OUTPUT);
-The problem — this creates a tiny glitch on the pin. Milliseconds, but the LED flickers. Not ideal but functional.
-Option 2: Voltage divider feedback
-Connect a second wire from the LED's positive leg through a resistor to a separate ADC input pin. That pin reads the actual voltage at the LED, completely independently:
-ESP32 pin 18 → resistor → LED → GND
-↓
-100kΩ to pin 34 (ADC)
-Pin 34 reads the voltage. If LED is on — high voltage. If LED is off or burnt out — near zero. No extra sensor needed, just one resistor and one wire.
-This is how professional embedded systems do feedback sensing without external sensors.
-Option 3: Current mirror
-Even more precise — put a small sense resistor (0.1Ω) in series with the LED. Measure the voltage drop across it via ADC. Ohm's law gives you the current. Current flowing = LED on. No current = LED off or dead.
-ESP32 pin 18 → LED → 0.1Ω sense resistor → GND
-↓
-ADC pin reads voltage drop
+**Digital read response:**
+```json
+{ "correlation_id": "...", "pin": 18, "value": 0 }
+```
+Value is 0 or 1.
+
+**PWM read response:**
+```json
+{ "correlation_id": "...", "pin": 32, "ledc_duty": 65535 }
+```
+`ledc_duty` is 0–65535, reflecting what was last written to the channel. This is a software register read — it does not confirm the device is physically working.
+
+### PWM Fault Detection Limitation
+
+`analogRead` cannot be used on an active PWM pin. Calling it detaches the pin from the LEDC peripheral, turning the device off. This was discovered and removed.
+
+`ledc_duty` alone cannot detect a faulty device — it reads what the controller was told to output, not what the device is actually doing.
+
+**Hardware solution — Voltage Divider Feedback:**
+
+Connect a second wire from the device's output leg through a resistor to a dedicated ADC pin (GPIO 32–39). That pin reads the actual physical voltage independently, without interrupting the PWM output:
+
+```
+ESP32 PWM pin → resistor → LED → GND
+                    ↓
+              100kΩ to ADC pin (GPIO 32-39)
+```
+
+- LED on → ADC pin reads high voltage (~3.3V)
+- LED off or burnt out → ADC pin reads near zero
+- ledc_duty high but ADC near zero → device is faulty
+
+This is the correct long-term solution. Until wired, `ledc_duty` is the only available signal and the agent cannot verify physical device state.

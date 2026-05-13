@@ -322,6 +322,22 @@ void ASHA::handleCommand(JsonVariant doc) {
             ledcWrite(channel, duty >> 3);
             Serial.printf("Set Pin %d to PWM ch:%d freq:%d duty:%d\n", pin, channel, freq, duty);
         }
+    } else if (action == "analog") {
+        int reading = analogRead(pin);
+        Serial.printf("Read Pin %d: Analog %d\n", pin, reading);
+
+        const char* corrID = doc["correlation_id"] | "";
+        if (strlen(corrID) > 0) {
+            JsonDocument response;
+            response["correlation_id"] = corrID;
+            response["pin"] = pin;
+            response["value"] = reading;
+
+            String topic = "asha/response/" + String(instance->currentAshaID.c_str());
+            String payload;
+            serializeJson(response, payload);
+            instance->mqttClient.publish(topic.c_str(), payload.c_str());
+        }
     } else if (action == "i2c_write") {
         int addr = doc["addr"];
         int reg = doc["reg"];
@@ -419,6 +435,8 @@ void ASHA::mqttCallback(char* topic, byte* payload, unsigned int length) {
             }
         } else if (action == "lua") {
             std::string script = doc["script"];
+            Serial.println("Received Lua script:");
+            Serial.println(script.c_str());
             char* copy = strdup(script.c_str());
             xQueueSend(instance->luaScriptQueue, &copy, 0);
         } else {
