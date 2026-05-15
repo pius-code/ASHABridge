@@ -1,6 +1,6 @@
 # ASHABridge
 
-**ASHABridge** is an microcontroller firmware library that connects IoT hardware to an AI agent via MQTT. The agent can control pins, run batch sequences, and execute real-time Lua scripts on the device — all without reflashing.
+**ASHABridge** is a microcontroller firmware library that connects IoT hardware to an AI agent via MQTT. The agent can control pins, run batch sequences, and execute real-time Lua scripts on the device — all without reflashing.
 
 ---
 
