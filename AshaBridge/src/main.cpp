@@ -9,22 +9,21 @@ void afterConnection() {
     digitalWrite(2, 1);
 }
 
-const char* ssid = "ashapius";
-const char* password = "piuspiusy";
+const char* ssid = "YOUR_WIFI_SSID";
+const char* password = "YOUR_WIFI_PASSWORD";
 
 void setup() {
     asha.asha_wifi.onConnect(afterConnection);
     asha.asha_wifi.begin(ssid, password);
     asha.asha_devices.addDevice(
-        asha.genericDev(DeviceCategory::Sensor, "Cinderella's water sensor", BusType::Analog), 34);
+        asha.genericDev(DeviceCategory::Sensor, "My water sensor", BusType::Analog), 34);
     asha.asha_devices.addDevice(
-        asha.genericDev(DeviceCategory::Actuator, "Cinderella's Light", BusType::PWM), 18);
+        asha.genericDev(DeviceCategory::Actuator, "My light", BusType::PWM), 18);
     asha.asha_devices.addDevice(
-        asha.genericDev(DeviceCategory::Actuator, "Cinderella's buzzer", BusType::PWM), 23);
+        asha.genericDev(DeviceCategory::Actuator, "My buzzer", BusType::PWM), 23);
 
-    asha.init("dc9e148e-e97d-4d55-839a-4ff927a87b41");
+    asha.init("YOUR_ASHA_ID");
 }
-
 void loop() {
     asha.run();
 }

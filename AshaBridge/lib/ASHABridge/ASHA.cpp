@@ -220,7 +220,7 @@ std::string ASHA::init(const std::string& ashaID) {
         Serial.println("ASHA: Payload ready to be sent to the cloud.");
         http.begin(
             client,
-            "http://aa39-154-161-58-101.ngrok-free.app/api/v1/asha/verify_and_register_device");
+            "YOUR_BACKEND_URL/api/v1/asha/verify_and_register_device");
 
         http.addHeader("Content-Type", "application/json");
         http.addHeader("ngrok-skip-browser-warning", "69420");
@@ -245,7 +245,7 @@ std::string ASHA::init(const std::string& ashaID) {
     Serial.println("ASHA: Setting up MQTT connection ...");
 
     mqttClient.setClient(espClient);
-    mqttClient.setServer("10.63.64.41", 1883);
+    mqttClient.setServer("YOUR_MQTT_BROKER_IP", 1883);
     mqttClient.setBufferSize(16 * 1024);
     mqttClient.setCallback(mqttCallback);
     currentAshaID = ashaID;
@@ -464,7 +464,7 @@ void ASHA::reconnectMQTT() {
     Serial.print("Attempting MQTT connection...");
     String clientId = "ASHA_B_DEVICE-";
     clientId += String(random(0xffff), HEX);
-    if (mqttClient.connect(clientId.c_str(), "Piusasha", "Piuspius27")) {
+    if (mqttClient.connect(clientId.c_str(), "YOUR_MQTT_USERNAME", "YOUR_MQTT_PASSWORD")) {
         Serial.println("connected to MQTT Broker!");
         lastMqttActivity = millis();
         String topic = "asha/commands/" + String(currentAshaID.c_str());
