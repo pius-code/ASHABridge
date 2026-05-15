@@ -39,6 +39,8 @@ asha.init("YOUR_ASHA_ID");
 ```
 
 **`lib/ASHABridge/ASHA.cpp`** — your backend URL and MQTT broker:
+
+see {% embed https://github.com/pius-code/ashaBackend %} for ashaBackend and while do a localhost:8080/docs creating a new project gives you the ashaID(sometimes callled the auth id)
 ```cpp
 http.begin(client, "YOUR_BACKEND_URL/api/v1/asha/verify_and_register_device");
 
