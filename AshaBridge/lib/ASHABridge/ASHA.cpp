@@ -13,8 +13,9 @@
 
 ASHA* ASHA::instance = nullptr;
 
-// Lua_asha
-//---------------------------------------------------------------------------------------
+// * ============================================================
+// * LUA API — functions exposed to Lua scripts via asha.*
+// * ============================================================
 
 static int lua_ashaCommand(lua_State* L) {
     const char* raw_command = luaL_checkstring(L, 1);
@@ -106,13 +107,17 @@ int luaopen_asha(lua_State* L) {
     return 1;
 }
 
-//--------------------------------------------------------------------------------------
+// * ============================================================
+// * MQTT SUBSCRIPTION — queued from Lua (Core 0), drained by run() on Core 1
+// * ============================================================
 void ASHA::subscribeTopic(const char* topic) {
     char* copy = strdup(topic);
     xQueueSend(pendingSubscriptions, &copy, 0);
 }
 
-// WIFI
+// * ============================================================
+// * WIFI
+// * ============================================================
 void ASHA_WIFI::onConnect(void (*userdefinedfunc)()) {
     userdefinedfunLoc = userdefinedfunc;
 }
@@ -137,7 +142,9 @@ void ASHA_WIFI::begin(const char* ssid, const char* password) {
     }
 }
 
-// devices is the name of the array that holds all the registered devices.
+// * ============================================================
+// * DEVICES — registry and actuator factory
+// * ============================================================
 int ASHA_Devices::addDevice(const DeviceType& deviceType, int pin) {
     if (count >= MAX_DEVICES) {
         return -1;  // this flag signifies that its full
@@ -167,6 +174,9 @@ DeviceType ASHA::genericDev(DeviceCategory deviceCategory, const std::string& me
     return dt;
 }
 
+// * ============================================================
+// * INIT — register devices with cloud, connect MQTT, start Lua task
+// * ============================================================
 std::string ASHA::init(const std::string& ashaID) {
     instance = this;
     JsonDocument doc;
@@ -293,8 +303,9 @@ std::string ASHA::init(const std::string& ashaID) {
     return payload;
 }
 
-// IR LOGIC
-// ----------------------------------------------------------------------------------------------
+// * ============================================================
+// * IR SENDER — universal raw timing transmitter via ESP32 RMT peripheral
+// * ============================================================
 void IRSender::send(JsonVariant doc) {
     JsonArray timing = doc["timing"];
     int freq = doc["freq"];
@@ -306,8 +317,9 @@ void IRSender::send(JsonVariant doc) {
     int size = timing.size();
     irsend.sendRaw(buf, size, freq);
 }
-// ---------------------------------------------------------------------------------------------------------------------------
-
+// * ============================================================
+// * COMMAND HANDLER — executes all MQTT commands (digital, pwm, i2c, spi, uart, ir, batch)
+// * ============================================================
 void ASHA::handleCommand(JsonVariant doc) {
     if (doc.containsKey("delay_ms")) {
         int delayTime = doc["delay_ms"];
@@ -461,6 +473,9 @@ void ASHA::handleCommand(JsonVariant doc) {
     }
 }
 
+// * ============================================================
+// * MQTT CALLBACK — routes incoming messages: commands path or topicPayloads store
+// * ============================================================
 void ASHA::mqttCallback(char* topic, byte* payload, unsigned int length) {
     instance->lastMqttActivity = millis();
     Serial.print("Message arrived on topic: ");
@@ -507,6 +522,9 @@ void ASHA::mqttCallback(char* topic, byte* payload, unsigned int length) {
     }
 }
 
+// * ============================================================
+// * LUA TASK — runs on Core 0, sleeps until a script arrives via queue
+// * ============================================================
 void ASHA::luaTask(void* param) {
     ASHA* self = (ASHA*)param;
     while (true) {
@@ -519,6 +537,9 @@ void ASHA::luaTask(void* param) {
     }
 }
 
+// * ============================================================
+// * MQTT RECONNECT — throttled to one attempt every 5 seconds
+// * ============================================================
 void ASHA::reconnectMQTT() {
     unsigned long now = millis();
     if (now - lastReconnectAttempt < 5000) return;
@@ -539,6 +560,9 @@ void ASHA::reconnectMQTT() {
     }
 }
 
+// * ============================================================
+// * RUN — called every loop() tick: WiFi watchdog, MQTT reconnect, pending subscriptions
+// * ============================================================
 void ASHA::run() {
     if (WiFi.status() != WL_CONNECTED) {
         WiFi.reconnect();

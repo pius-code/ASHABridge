@@ -1,5 +1,7 @@
 // you wrote separate classes, in future please put it in one class
 #include <ArduinoJson.h>
+#include <IRremoteESP8266.h>
+#include <IRsend.h>
 #include <Lua.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
