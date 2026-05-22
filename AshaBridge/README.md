@@ -83,7 +83,7 @@ See [DOCS.md](DOCS.md) for the full API reference, command format, Lua scripting
 
 ## To-Do
 
-1. **Wireless device support (IR and RF)** — add command handlers for IR blasters and RF transmitters so the agent can control wireless devices (e.g. TVs, remote-controlled sockets) the same way it controls wired GPIO.
+1. **RF wireless device support** — add command handlers for RF transmitters so the agent can control RF-controlled devices (e.g. remote-controlled sockets) the same way it controls IR and wired GPIO.
 
 2. **Replace `while` loops with interrupts** — the current Lua monitoring pattern uses `while true` loops which permanently lock the Lua VM. The fix is to use hardware interrupts (via `attachInterrupt`) on the C++ side and expose a callback registration API to Lua, so the Lua VM stays free between events. The agent's tool descriptions should also be updated to reflect the interrupt-based approach.
 
