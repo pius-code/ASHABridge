@@ -2,6 +2,8 @@
 
 #include <ArduinoJson.h>
 #include <HTTPClient.h>
+#include <IRremoteESP8266.h>
+#include <IRsend.h>
 #include <Lua.h>
 #include <SPI.h>
 #include <WiFi.h>
@@ -71,12 +73,33 @@ int lua_ledcRead(lua_State* L) {
 int lua_sleep(lua_State* L) {
     int ms = luaL_checkinteger(L, 1);
     vTaskDelay(pdMS_TO_TICKS(ms));
+    if (ASHA::getInstance()->getStopLuaRequested()) {
+        luaL_error(L, "asha agent stopped current script");
+    }
     return 0;
 }
 
-static const luaL_Reg ashalib[] = {
-    {"command", lua_ashaCommand}, {"analogRead", lua_analogRead}, {"digitalRead", lua_digitalRead},
-    {"ledcRead", lua_ledcRead},   {"sleep", lua_sleep},           {nullptr, nullptr}};
+int lua_subscribe(lua_State* L) {
+    const char* topic = luaL_checkstring(L, 1);
+    ASHA::getInstance()->subscribeTopic(topic);
+    return 0;
+}
+
+int lua_getVar(lua_State* L) {
+    const char* topic = luaL_checkstring(L, 1);
+    const std::string message = ASHA::getInstance()->gettopicPayload(topic);
+    lua_pushstring(L, message.c_str());
+    return 1;
+}
+
+static const luaL_Reg ashalib[] = {{"command", lua_ashaCommand},
+                                   {"analogRead", lua_analogRead},
+                                   {"digitalRead", lua_digitalRead},
+                                   {"ledcRead", lua_ledcRead},
+                                   {"sleep", lua_sleep},
+                                   {"subscribe", lua_subscribe},
+                                   {"readMessage", lua_getVar},
+                                   {nullptr, nullptr}};
 
 int luaopen_asha(lua_State* L) {
     luaL_newlib(L, ashalib);
@@ -84,6 +107,10 @@ int luaopen_asha(lua_State* L) {
 }
 
 //--------------------------------------------------------------------------------------
+void ASHA::subscribeTopic(const char* topic) {
+    char* copy = strdup(topic);
+    xQueueSend(pendingSubscriptions, &copy, 0);
+}
 
 // WIFI
 void ASHA_WIFI::onConnect(void (*userdefinedfunc)()) {
@@ -181,6 +208,9 @@ std::string ASHA::init(const std::string& ashaID) {
             case BusType::SPI:
                 deviceObj["bus"] = "SPI";
                 break;
+            case BusType::IR:
+                deviceObj["bus"] = "IR";
+                break;
         }
 
         // hardware init
@@ -202,6 +232,8 @@ std::string ASHA::init(const std::string& ashaID) {
             }
             pinMode(rd.pin, OUTPUT);
             digitalWrite(rd.pin, HIGH);
+        } else if (rd.deviceType.bus == BusType::IR) {
+            wirelessSenders[rd.pin] = new IRSender(rd.pin);
         }
     }
 
@@ -220,7 +252,7 @@ std::string ASHA::init(const std::string& ashaID) {
         Serial.println("ASHA: Payload ready to be sent to the cloud.");
         http.begin(
             client,
-            "YOUR_BACKEND_URL/api/v1/asha/verify_and_register_device");
+            "http://693b-154-160-4-204.ngrok-free.app/api/v1/asha/verify_and_register_device");
 
         http.addHeader("Content-Type", "application/json");
         http.addHeader("ngrok-skip-browser-warning", "69420");
@@ -245,7 +277,7 @@ std::string ASHA::init(const std::string& ashaID) {
     Serial.println("ASHA: Setting up MQTT connection ...");
 
     mqttClient.setClient(espClient);
-    mqttClient.setServer("YOUR_MQTT_BROKER_IP", 1883);
+    mqttClient.setServer("10.15.155.41", 1883);
     mqttClient.setBufferSize(16 * 1024);
     mqttClient.setCallback(mqttCallback);
     currentAshaID = ashaID;
@@ -253,12 +285,28 @@ std::string ASHA::init(const std::string& ashaID) {
     // LUA -------------------------------------------------------------------------------
     ashaLua.addModule("asha", luaopen_asha);
     luaScriptQueue = xQueueCreate(5, sizeof(char*));
+    pendingSubscriptions = xQueueCreate(10, sizeof(char*));
 
     xTaskCreatePinnedToCore(luaTask, "luaTask", 10 * 1024, this, 1, nullptr, 0);
     // ------------------------------------------------------------------------------------
 
     return payload;
 }
+
+// IR LOGIC
+// ----------------------------------------------------------------------------------------------
+void IRSender::send(JsonVariant doc) {
+    JsonArray timing = doc["timing"];
+    int freq = doc["freq"];
+    uint16_t buf[timing.size()];
+    for (int i = 0; i < timing.size(); i++) {
+        buf[i] = timing[i];
+    }
+
+    int size = timing.size();
+    irsend.sendRaw(buf, size, freq);
+}
+// ---------------------------------------------------------------------------------------------------------------------------
 
 void ASHA::handleCommand(JsonVariant doc) {
     if (doc.containsKey("delay_ms")) {
@@ -407,6 +455,9 @@ void ASHA::handleCommand(JsonVariant doc) {
         Serial2.print(data);
 
         Serial.printf("UART write → baud:%d data:%s\n", baud, data.c_str());
+    } else if (action == "ir_send") {
+        int pin = doc["pin"];
+        instance->wirelessSenders[pin]->send(doc);
     }
 }
 
@@ -421,7 +472,11 @@ void ASHA::mqttCallback(char* topic, byte* payload, unsigned int length) {
     }
     Serial.print("Payload: ");
     Serial.println(message.c_str());
-
+    std::string topicStr(topic);
+    if (topicStr != "asha/commands/" + instance->currentAshaID) {
+        instance->topicPayloads[topicStr] = message;
+        return;
+    }
     JsonDocument doc;
     DeserializationError error = deserializeJson(doc, message);
 
@@ -438,7 +493,14 @@ void ASHA::mqttCallback(char* topic, byte* payload, unsigned int length) {
             Serial.println("Received Lua script:");
             Serial.println(script.c_str());
             char* copy = strdup(script.c_str());
+            instance->stopLuaRequested = true;
+            char* old;
+            while (xQueueReceive(instance->luaScriptQueue, &old, 0) == pdTRUE) {
+                free(old);
+            }
+
             xQueueSend(instance->luaScriptQueue, &copy, 0);
+
         } else {
             handleCommand(doc.as<JsonVariant>());
         }
@@ -450,6 +512,7 @@ void ASHA::luaTask(void* param) {
     while (true) {
         char* script;
         if (xQueueReceive(self->luaScriptQueue, &script, portMAX_DELAY) == pdTRUE) {
+            self->stopLuaRequested = false;
             self->ashaLua.run(script);
             free(script);
         }
@@ -464,7 +527,7 @@ void ASHA::reconnectMQTT() {
     Serial.print("Attempting MQTT connection...");
     String clientId = "ASHA_B_DEVICE-";
     clientId += String(random(0xffff), HEX);
-    if (mqttClient.connect(clientId.c_str(), "YOUR_MQTT_USERNAME", "YOUR_MQTT_PASSWORD")) {
+    if (mqttClient.connect(clientId.c_str())) {
         Serial.println("connected to MQTT Broker!");
         lastMqttActivity = millis();
         String topic = "asha/commands/" + String(currentAshaID.c_str());
@@ -490,5 +553,13 @@ void ASHA::run() {
     if (!mqttClient.connected()) {
         reconnectMQTT();
     }
+    if (mqttClient.connected()) {
+        char* subTopic;
+        while (xQueueReceive(pendingSubscriptions, &subTopic, 0) == pdTRUE) {
+            mqttClient.subscribe(subTopic);
+            free(subTopic);
+        }
+    }
+
     mqttClient.loop();
 }

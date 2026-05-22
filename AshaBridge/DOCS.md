@@ -4,7 +4,7 @@
 
 - Connect an ESP32 to a WiFi network and register it with the ASHA cloud backend
 - Register up to 30 hardware devices (sensors and actuators) with descriptive metadata
-- Control hardware pins over MQTT: digital read/write, PWM, I2C, SPI, UART
+- Control hardware pins over MQTT: digital read/write, PWM, I2C, SPI, UART, IR
 - Send batched multi-step commands with non-blocking delays
 - Run real-time Lua scripts on the device (Core 0) without reflashing
 - Read sensor values back to the agent via MQTT request-response
@@ -43,6 +43,30 @@ The Lua task runs at priority 1 (low). MQTT and WiFi run at higher priorities �
 ```cpp
 static ASHA* instance;  // set to `this` at the start of init()
 ```
+
+### mqttCallback — The Two-Path Fork
+
+Every incoming MQTT message passes through `mqttCallback`. The first thing it does is check which topic the message arrived on:
+
+```
+message arrives on any topic
+        ↓
+is it on asha/commands/{this_device_id}?
+        │
+        ├── YES → handle as a command
+        │         (digital, pwm, lua, batch, i2c, spi, uart...)
+        │
+        └── NO  → store raw payload in topicPayloads[topic]
+                  and return early
+                  (Lua scripts poll this via asha.readMessage())
+```
+
+**Why this matters for the vision feature:**
+
+- The agent sends the Lua script to `asha/commands/abc123` → condition is FALSE → falls through to command handling → script runs → `asha.subscribe("asha/asha_vision/abc123")` is called → device opts in to the vision topic.
+- Later, the vision server publishes `"person"` to `asha/asha_vision/abc123` → condition is TRUE → stored in `topicPayloads` → Lua reads it via `asha.readMessage("asha/asha_vision/abc123")`.
+
+The Lua script arrives on the **commands path**. The vision data arrives on the **topicPayloads path**. They never interfere with each other.
 
 ---
 
@@ -104,7 +128,7 @@ DeviceType genericDev(DeviceCategory category, const std::string& metadata, BusT
 | ---------- | ------------------------------------------------ |
 | `category` | `DeviceCategory::Sensor`, `DeviceCategory::Actuator` |
 | `metadata` | Any human-readable label — the agent uses this   |
-| `bus`      | `BusType::Digital`, `BusType::Analog`, `BusType::PWM`, `BusType::I2C`, `BusType::SPI` |
+| `bus`      | `BusType::Digital`, `BusType::Analog`, `BusType::PWM`, `BusType::I2C`, `BusType::SPI`, `BusType::IR` |
 
 The library automatically calls `pinMode` for Digital and SPI devices during `init`. For I2C, `Wire.begin()` is called once when the first I2C device is registered.
 
@@ -167,6 +191,33 @@ Set `value` to `-1` to read the pin instead of writing.
   "data": [1, 2, 3]
 }
 ```
+
+### IR Send (Universal Raw Mode)
+
+IR is implemented as a **raw timing transmitter** — the agent sends pulse durations in microseconds directly, with no protocol-specific knowledge required on the device. This means any IR device (any brand, any remote) works without firmware changes, as long as the agent has the raw timings.
+
+The ESP32 uses its RMT (Remote Control Transceiver) hardware peripheral to reproduce the timings precisely. Each `IRSender` object is created once during `init()` per registered IR pin and stored for the lifetime of the program — no re-initialization on every command.
+
+```json
+{
+  "action": "ir_send",
+  "pin": 4,
+  "freq": 38,
+  "timings": [4500, 4500, 560, 1690, 560, 1690, 560, 560]
+}
+```
+
+| Field | Description |
+| ----- | ----------- |
+| `pin` | GPIO pin the IR LED is connected to — must be registered with `BusType::IR` |
+| `freq` | Carrier frequency in kHz — 38 is standard for most consumer IR remotes |
+| `timings` | Array of pulse durations in microseconds — alternating on/off. Odd indices = LED on, even indices = LED off |
+
+**Where to get timings:** IR code databases like [IRDB](https://github.com/probonopd/irdb) contain raw timings for thousands of devices. Alternatively, point the original remote at an IR receiver module connected to the ESP32 and record the raw signal.
+
+**Why raw instead of protocol-specific methods?**
+
+The IRremoteESP8266 library has dozens of protocol methods (`sendSAMSUNG`, `sendNEC`, `sendSONY`, etc.). Wrapping each one would require firmware updates every time a new brand is added. Raw mode means the firmware never needs to change — the agent carries the timing data and the device is a universal transmitter.
 
 ### UART Write
 
@@ -344,7 +395,48 @@ Payloads over 16 KB will be silently dropped by PubSubClient.
 
 ## Limitations
 
-- **`while` loops in Lua are dangerous.** The Lua VM is single-threaded — a `while` loop permanently occupies it, blocking all 5 queue slots. Any subsequent scripts sent by the agent will queue and never execute until the device reboots. There is no way to stop a running `while` loop remotely — **the only recovery is a device restart.** For persistent monitoring, prefer the Workflow control mode.
+- **`while` loops without `asha.sleep()` will crash the device.** The watchdog timer reboots the ESP32 if the OS scheduler is starved. Every loop must call `asha.sleep()`. Minimum: `asha.sleep(10)`.
+
+### Multiple concurrent real-time tasks — FIXED
+
+The device can run as many concurrent real-time conditions as resources allow. You are not limited to one behavior at a time.
+
+**How it works:** the agent merges all active conditions into a single Lua script and sends it as a replacement. The firmware stops the running script cleanly at the next `asha.sleep()` call and immediately runs the merged replacement. From the user's perspective, all behaviors are running simultaneously.
+
+**Example — button + touch sensor + vision, all active at once:**
+
+```lua
+asha.subscribe('asha/asha_vision/abc123')
+while true do
+  local btn     = asha.digitalRead(21)
+  local touch   = asha.analogRead(34)
+  local detected = asha.readMessage('asha/asha_vision/abc123')
+
+  if btn == 1 then
+    asha.command('{"pin": 18, "action": "digital", "value": 1}')
+  end
+  if touch > 3000 then
+    asha.command('{"pin": 25, "action": "digital", "value": 1}')
+  end
+  if detected == 'person' then
+    asha.command('{"pin": 23, "action": "digital", "value": 1}')
+  end
+  asha.sleep(10)
+end
+```
+
+**How the kill mechanism works:**
+
+Three approaches were considered when a new script arrives while a loop is running:
+
+1. **Spawn a new Lua process per script** — each VM takes ~40 KB of heap. Multiple scripts would exhaust RAM quickly. Rejected.
+2. **Context-switch between scripts rapidly** — not feasible without a custom scheduler, and doesn't solve shared hardware race conditions. Rejected.
+3. **Agent merges conditions, firmware kills and replaces** — one Lua VM runs at all times. When a new script arrives, a `stopLuaRequested` flag is set. The next `asha.sleep()` call detects it, throws a Lua error to unwind the running loop, and `luaTask` picks up the merged replacement. **Chosen approach.**
+
+Benefits:
+- Fixed memory cost regardless of how many conditions are active
+- No hardware race conditions — one script owns all pins at all times
+- `asha.sleep()` serves double duty: feeds the watchdog AND is the safe kill checkpoint
 - **`analogRead` only works on GPIO 32–39.** Calling it on a digital-only pin returns garbage.
 - **`digitalRead` on a PWM pin is only reliable at full on (100% duty) or full off (0%).** Intermediate brightness gives inconsistent readings.
 - **`analogRead` cannot be used on an active PWM pin.** Calling it detaches the pin from the LEDC peripheral, turning the device off.

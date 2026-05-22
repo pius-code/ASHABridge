@@ -5,11 +5,14 @@
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
 
+#include <map>
 #include <string>
 
 enum class DeviceCategory { Actuator, Sensor };
 
-enum class BusType { Digital, PWM, Analog, I2C, SPI };
+enum class BusType { Digital, PWM, Analog, I2C, SPI, IR };
+
+enum class IRProtocol { Samsung, NEC };
 
 // WIFI
 class ASHA_WIFI {
@@ -58,6 +61,24 @@ class ASHA_Devices {
     int count = 0;
 };
 
+class WirelessSender {
+   public:
+    virtual void send(JsonVariant doc) = 0;
+    virtual ~WirelessSender() {}
+};
+
+class IRSender : public WirelessSender {
+   private:
+    IRsend irsend;
+
+   public:
+    IRSender(int pin) : irsend(pin) {
+        irsend.begin();
+    }
+
+    void send(JsonVariant doc) override;
+};
+
 class ASHA {
    public:
     ASHA_WIFI asha_wifi;
@@ -68,6 +89,16 @@ class ASHA {
     void run();
 
     static void handleCommand(JsonVariant doc);
+    static ASHA* getInstance() {
+        return instance;
+    }
+    void subscribeTopic(const char* topic);
+    const std::string gettopicPayload(const char* topic) {
+        return topicPayloads[topic];
+    }
+    bool getStopLuaRequested() {
+        return stopLuaRequested;
+    }
 
    private:
     WiFiClient espClient;
@@ -79,6 +110,11 @@ class ASHA {
     QueueHandle_t luaScriptQueue;
     static void luaTask(void* param);
     unsigned long lastMqttActivity = 0;
+    std::map<std::string, std::string> topicPayloads;
+    std::map<int, WirelessSender*>
+        wirelessSenders;  // using this to map all pins to thier corresponding objects
+    QueueHandle_t pendingSubscriptions;
+    volatile bool stopLuaRequested = false;
 
     void reconnectMQTT();
     static void mqttCallback(char* topic, byte* payload, unsigned int length);
