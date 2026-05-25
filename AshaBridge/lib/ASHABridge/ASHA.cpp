@@ -262,7 +262,7 @@ std::string ASHA::init(const std::string& ashaID) {
         Serial.println("ASHA: Payload ready to be sent to the cloud.");
         http.begin(
             client,
-            "http://693b-154-160-4-204.ngrok-free.app/api/v1/asha/verify_and_register_device");
+            "http://4008-154-160-4-204.ngrok-free.app/api/v1/asha/verify_and_register_device");
 
         http.addHeader("Content-Type", "application/json");
         http.addHeader("ngrok-skip-browser-warning", "69420");
@@ -307,14 +307,14 @@ std::string ASHA::init(const std::string& ashaID) {
 // * IR SENDER — universal raw timing transmitter via ESP32 RMT peripheral
 // * ============================================================
 void IRSender::send(JsonVariant doc) {
-    JsonArray timing = doc["timing"];
+    JsonArray timings = doc["timings"];
     int freq = doc["freq"];
-    uint16_t buf[timing.size()];
-    for (int i = 0; i < timing.size(); i++) {
-        buf[i] = timing[i];
+    uint16_t buf[timings.size()];
+    for (int i = 0; i < timings.size(); i++) {
+        buf[i] = timings[i];
     }
 
-    int size = timing.size();
+    int size = timings.size();
     irsend.sendRaw(buf, size, freq);
 }
 // * ============================================================
