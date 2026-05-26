@@ -145,13 +145,13 @@ void ASHA_WIFI::begin(const char* ssid, const char* password) {
 // * ============================================================
 // * DEVICES — registry and actuator factory
 // * ============================================================
-int ASHA_Devices::addDevice(const DeviceType& deviceType, int pin) {
+int ASHA_Devices::addDevice(const DeviceType& deviceType, int pin, bool enable_matter) {
     if (count >= MAX_DEVICES) {
         return -1;  // this flag signifies that its full
     }
 
     int newId = count + 1;
-    devices[count] = {newId, deviceType, pin};
+    devices[count] = {newId, deviceType, pin, enable_matter};
     count++;
 
     return newId;
@@ -227,6 +227,7 @@ std::string ASHA::init(const std::string& ashaID) {
         if (rd.deviceType.bus == BusType::Digital) {
             if (rd.deviceType.category == DeviceCategory::Actuator) {
                 pinMode(rd.pin, OUTPUT);
+                if (rd.enable_matter) ASHAMatterEndpoint[rd.pin] = new onOffCluster(rd.pin);
             } else {
                 pinMode(rd.pin, INPUT);
             }
@@ -262,7 +263,7 @@ std::string ASHA::init(const std::string& ashaID) {
         Serial.println("ASHA: Payload ready to be sent to the cloud.");
         http.begin(
             client,
-            "http://4008-154-160-4-204.ngrok-free.app/api/v1/asha/verify_and_register_device");
+            "https://955d-154-161-18-203.ngrok-free.app/api/v1/asha/verify_and_register_device");
 
         http.addHeader("Content-Type", "application/json");
         http.addHeader("ngrok-skip-browser-warning", "69420");
@@ -300,8 +301,27 @@ std::string ASHA::init(const std::string& ashaID) {
     xTaskCreatePinnedToCore(luaTask, "luaTask", 10 * 1024, this, 1, nullptr, 0);
     // ------------------------------------------------------------------------------------
 
+    // ------------------------------------------------------------------------------------
+    // ASHA_Matter
+    Matter.begin();
+    if (!Matter.isDeviceCommissioned()) {
+        Serial.printf("Manual pairing code: %s\n", Matter.getManualPairingCode().c_str());
+        Serial.printf("QR code URL: %s\n", Matter.getOnboardingQRCodeUrl().c_str());
+    }
     return payload;
 }
+// * -----------------------------------------------------------------
+// * ASHA MATTER
+// * ==================================================================
+
+onOffCluster::onOffCluster(int pin) {
+    matterOnOffPlugin.begin();
+    matterOnOffPlugin.onChange([pin](bool state) -> bool {
+        digitalWrite(pin, state ? HIGH : LOW);
+        return true;
+    });
+}
+// * =====================================================
 
 // * ============================================================
 // * IR SENDER — universal raw timing transmitter via ESP32 RMT peripheral
@@ -377,9 +397,8 @@ void ASHA::handleCommand(JsonVariant doc) {
         } else {
             int freq = doc["freq"];
             int duty = doc["duty"];
-            ledcSetup(channel, freq, 13);
-            ledcAttachPin(pin, channel);
-            ledcWrite(channel, duty >> 3);
+            ledcAttach(pin, freq, 13);
+            ledcWrite(pin, duty >> 3);
             Serial.printf("Set Pin %d to PWM ch:%d freq:%d duty:%d\n", pin, channel, freq, duty);
         }
     } else if (action == "analog") {

@@ -120,14 +120,15 @@ asha.asha_devices.addDevice(
 ```
 
 **`genericDev` signature:**
+
 ```cpp
 DeviceType genericDev(DeviceCategory category, const std::string& metadata, BusType bus);
 ```
 
-| Parameter  | Options                                          |
-| ---------- | ------------------------------------------------ |
-| `category` | `DeviceCategory::Sensor`, `DeviceCategory::Actuator` |
-| `metadata` | Any human-readable label — the agent uses this   |
+| Parameter  | Options                                                                                              |
+| ---------- | ---------------------------------------------------------------------------------------------------- |
+| `category` | `DeviceCategory::Sensor`, `DeviceCategory::Actuator`                                                 |
+| `metadata` | Any human-readable label — the agent uses this                                                       |
 | `bus`      | `BusType::Digital`, `BusType::Analog`, `BusType::PWM`, `BusType::I2C`, `BusType::SPI`, `BusType::IR` |
 
 The library automatically calls `pinMode` for Digital and SPI devices during `init`. For I2C, `Wire.begin()` is called once when the first I2C device is registered.
@@ -207,10 +208,10 @@ The ESP32 uses its RMT (Remote Control Transceiver) hardware peripheral to repro
 }
 ```
 
-| Field | Description |
-| ----- | ----------- |
-| `pin` | GPIO pin the IR LED is connected to — must be registered with `BusType::IR` |
-| `freq` | Carrier frequency in kHz — 38 is standard for most consumer IR remotes |
+| Field     | Description                                                                                                 |
+| --------- | ----------------------------------------------------------------------------------------------------------- |
+| `pin`     | GPIO pin the IR LED is connected to — must be registered with `BusType::IR`                                 |
+| `freq`    | Carrier frequency in kHz — 38 is standard for most consumer IR remotes                                      |
 | `timings` | Array of pulse durations in microseconds — alternating on/off. Odd indices = LED on, even indices = LED off |
 
 **Where to get timings:** IR code databases like [IRDB](https://github.com/probonopd/irdb) contain raw timings for thousands of devices. Alternatively, point the original remote at an IR receiver module connected to the ESP32 and record the raw signal.
@@ -358,25 +359,28 @@ The feedback mechanism is implemented for Digital, PWM, and Analog buses via MQT
 3. The server waits up to 5 seconds for the response, matched by `correlation_id`
 
 **Digital read response:**
+
 ```json
 { "correlation_id": "...", "pin": 18, "value": 0 }
 ```
 
 **PWM read response:**
+
 ```json
 { "correlation_id": "...", "pin": 32, "ledc_duty": 65535 }
 ```
+
 `ledc_duty` is 0–65535, reflecting what was last written to the channel — it does not confirm the device is physically working.
 
 ---
 
 ## Agent Control Modes
 
-| Mode         | How it works                                                                 |
-| ------------ | ---------------------------------------------------------------------------- |
-| **Direct**   | Agent sends individual one-shot commands on demand                           |
+| Mode         | How it works                                                                               |
+| ------------ | ------------------------------------------------------------------------------------------ |
+| **Direct**   | Agent sends individual one-shot commands on demand                                         |
 | **Lua**      | Agent sends a persistent script that runs on Core 0, reacting to sensor input in real time |
-| **Workflow** | Agent polls from the cloud on a schedule (e.g. every 5 minutes, or at 6am daily) |
+| **Workflow** | Agent polls from the cloud on a schedule (e.g. every 5 minutes, or at 6am daily)           |
 
 ---
 
@@ -434,6 +438,7 @@ Three approaches were considered when a new script arrives while a loop is runni
 3. **Agent merges conditions, firmware kills and replaces** — one Lua VM runs at all times. When a new script arrives, a `stopLuaRequested` flag is set. The next `asha.sleep()` call detects it, throws a Lua error to unwind the running loop, and `luaTask` picks up the merged replacement. **Chosen approach.**
 
 Benefits:
+
 - Fixed memory cost regardless of how many conditions are active
 - No hardware race conditions — one script owns all pins at all times
 - `asha.sleep()` serves double duty: feeds the watchdog AND is the safe kill checkpoint
@@ -456,13 +461,14 @@ Benefits:
 **Root cause:** The WiFi connection was dropping (phone hotspot silently disconnects idle clients), not MQTT itself. Once WiFi dropped, `run()` exited early before reaching the MQTT reconnect logic.
 
 **Fix:**
+
 1. Use a laptop or router hotspot — phone hotspots silently drop idle devices.
 2. `WiFi.reconnect()` is called inside `run()` whenever WiFi drops.
 3. MQTT watchdog is set to 30 minutes (`1800000 ms`) as a last-resort safety net, not the primary reconnect mechanism.
 
 ### PWM Fault Detection Limitation
 
-`ledc_duty` reads what the controller was *told* to output, not what the device is *actually* doing. A burnt-out LED reads `ledc_duty = 65535` even though it is off.
+`ledc_duty` reads what the controller was _told_ to output, not what the device is _actually_ doing. A burnt-out LED reads `ledc_duty = 65535` even though it is off.
 
 **Hardware solution — Voltage Divider Feedback:**
 
@@ -475,3 +481,21 @@ ESP32 PWM pin → resistor → LED → GND
 - LED on → ADC pin reads ~3.3V
 - LED off or burnt out → ADC pin reads ~0V
 - `ledc_duty` high but ADC near zero → device is faulty
+
+ASHA V2
+upgraded to use esp32 3.x
+changes
+
+1. now we dont add channel to ledcWrite
+   old
+   // You manually pick a channel (0-15)
+   ledcSetup(channel, freq, resolution); // configure channel
+   ledcAttachPin(pin, channel); // attach pin to channel
+   ledcWrite(channel, duty);
+
+new(the channel is handled internally)
+
+2. Matter support added — `addDevice(..., true)` flag makes any digital actuator a Matter endpoint (OnOffPlugin cluster), controllable by Google Home, Alexa, Siri via one QR code commissioning.
+
+### TODO
+- [ ] Pass `metadata` string into `onOffCluster` constructor and call `setEndpointName()` (or equivalent) so Matter endpoint names match the user's device labels instead of defaulting to generic names during commissioning.

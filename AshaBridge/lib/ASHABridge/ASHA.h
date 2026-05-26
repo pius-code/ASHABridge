@@ -3,6 +3,7 @@
 #include <IRremoteESP8266.h>
 #include <IRsend.h>
 #include <Lua.h>
+#include <Matter.h>
 #include <PubSubClient.h>
 #include <WiFi.h>
 #include <WiFiClientSecure.h>
@@ -38,6 +39,7 @@ struct RegisteredDevice {
     int id;
     DeviceType deviceType;
     int pin;
+    bool enable_matter = false;
 };
 
 // ACTUATORS
@@ -49,7 +51,7 @@ class ASHA_Actuators {
 // ADDING_DEVICE_CONNECTION
 class ASHA_Devices {
    public:
-    int addDevice(const DeviceType& deviceType, int pin);
+    int addDevice(const DeviceType& deviceType, int pin, bool enable_matter = false);
     int getCount() const {
         return count;
     }
@@ -67,6 +69,19 @@ class WirelessSender {
    public:
     virtual void send(JsonVariant doc) = 0;
     virtual ~WirelessSender() {}
+};
+
+class ASHAMatterObject {
+   public:
+    virtual ~ASHAMatterObject() {}
+};
+
+class onOffCluster : public ASHAMatterObject {
+   private:
+    MatterOnOffPlugin matterOnOffPlugin;
+
+   public:
+    onOffCluster(int pin);
 };
 
 class IRSender : public WirelessSender {
@@ -115,6 +130,7 @@ class ASHA {
     std::map<std::string, std::string> topicPayloads;
     std::map<int, WirelessSender*>
         wirelessSenders;  // using this to map all pins to thier corresponding objects
+    std::map<int, ASHAMatterObject*> ASHAMatterEndpoint;
     QueueHandle_t pendingSubscriptions;
     volatile bool stopLuaRequested = false;
 
