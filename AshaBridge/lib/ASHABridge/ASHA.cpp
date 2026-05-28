@@ -377,9 +377,8 @@ void ASHA::handleCommand(JsonVariant doc) {
         } else {
             int freq = doc["freq"];
             int duty = doc["duty"];
-            ledcSetup(channel, freq, 13);
-            ledcAttachPin(pin, channel);
-            ledcWrite(channel, duty >> 3);
+            ledcAttach(pin, freq, 13);
+            ledcWrite(pin, duty >> 3);
             Serial.printf("Set Pin %d to PWM ch:%d freq:%d duty:%d\n", pin, channel, freq, duty);
         }
     } else if (action == "analog") {
