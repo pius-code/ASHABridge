@@ -11,6 +11,8 @@
 
 #include <lua/lua.hpp>
 
+#include "lwip/dns.h"
+
 ASHA* ASHA::instance = nullptr;
 
 // * ============================================================
@@ -86,6 +88,16 @@ int lua_subscribe(lua_State* L) {
     return 0;
 }
 
+int lua_publish(lua_State* L) {
+    const char* topic = luaL_checkstring(L, 1);
+    const char* message = luaL_checkstring(L, 2);
+    PublishMessage msg;
+    msg.topic = strdup(topic);
+    msg.message = strdup(message);
+    ASHA::getInstance()->publishLuaMessage(msg);
+    return 0;
+}
+
 int lua_getVar(lua_State* L) {
     const char* topic = luaL_checkstring(L, 1);
     const std::string message = ASHA::getInstance()->gettopicPayload(topic);
@@ -100,6 +112,7 @@ static const luaL_Reg ashalib[] = {{"command", lua_ashaCommand},
                                    {"sleep", lua_sleep},
                                    {"subscribe", lua_subscribe},
                                    {"readMessage", lua_getVar},
+                                   {"publishMessage", lua_publish},
                                    {nullptr, nullptr}};
 
 int luaopen_asha(lua_State* L) {
@@ -115,6 +128,10 @@ void ASHA::subscribeTopic(const char* topic) {
     xQueueSend(pendingSubscriptions, &copy, 0);
 }
 
+void ASHA::publishLuaMessage(PublishMessage publishMessage) {
+    xQueueSend(pendingPublish, &publishMessage, 0);
+}
+
 // * ============================================================
 // * WIFI
 // * ============================================================
@@ -124,10 +141,6 @@ void ASHA_WIFI::onConnect(void (*userdefinedfunc)()) {
 
 void ASHA_WIFI::begin(const char* ssid, const char* password) {
     WiFi.mode(WIFI_STA);
-    IPAddress primaryDNS(8, 8, 8, 8);
-    IPAddress secondaryDNS(8, 8, 4, 4);
-    WiFi.config(INADDR_NONE, INADDR_NONE, INADDR_NONE, primaryDNS, secondaryDNS);
-
     WiFi.begin(ssid, password);
     Serial.begin(115200);
     Serial.print("Connecting");
@@ -136,6 +149,18 @@ void ASHA_WIFI::begin(const char* ssid, const char* password) {
         Serial.print(".");
     }
     Serial.println("\nConnected to WiFi");
+
+    // Set DNS directly in lwIP — WiFi.config() doesn't reliably propagate DNS
+    ip_addr_t dns1, dns2;
+    IP_ADDR4(&dns1, 8, 8, 8, 8);
+    IP_ADDR4(&dns2, 8, 8, 4, 4);
+    dns_setserver(0, &dns1);
+    dns_setserver(1, &dns2);
+
+    Serial.print("IP: ");
+    Serial.println(WiFi.localIP());
+    Serial.print("DNS: ");
+    Serial.println(WiFi.dnsIP());
 
     if (userdefinedfunLoc != nullptr) {
         userdefinedfunLoc();
@@ -262,7 +287,7 @@ std::string ASHA::init(const std::string& ashaID) {
         Serial.println("ASHA: Payload ready to be sent to the cloud.");
         http.begin(
             client,
-            "http://693b-154-160-4-204.ngrok-free.app/api/v1/asha/verify_and_register_device");
+            "http://cba4-41-204-58-138.ngrok-free.app/api/v1/asha/verify_and_register_device");
 
         http.addHeader("Content-Type", "application/json");
         http.addHeader("ngrok-skip-browser-warning", "69420");
@@ -287,7 +312,7 @@ std::string ASHA::init(const std::string& ashaID) {
     Serial.println("ASHA: Setting up MQTT connection ...");
 
     mqttClient.setClient(espClient);
-    mqttClient.setServer("10.15.155.41", 1883);
+    mqttClient.setServer("10.0.90.83", 1883);
     mqttClient.setBufferSize(16 * 1024);
     mqttClient.setCallback(mqttCallback);
     currentAshaID = ashaID;
@@ -295,6 +320,7 @@ std::string ASHA::init(const std::string& ashaID) {
     // LUA -------------------------------------------------------------------------------
     ashaLua.addModule("asha", luaopen_asha);
     luaScriptQueue = xQueueCreate(5, sizeof(char*));
+    pendingPublish = xQueueCreate(5, sizeof(PublishMessage));
     pendingSubscriptions = xQueueCreate(10, sizeof(char*));
 
     xTaskCreatePinnedToCore(luaTask, "luaTask", 10 * 1024, this, 1, nullptr, 0);
@@ -377,8 +403,9 @@ void ASHA::handleCommand(JsonVariant doc) {
         } else {
             int freq = doc["freq"];
             int duty = doc["duty"];
-            ledcAttach(pin, freq, 13);
-            ledcWrite(pin, duty >> 3);
+            ledcSetup(channel, freq, 13);
+            ledcAttachPin(pin, channel);
+            ledcWrite(channel, duty >> 3);
             Serial.printf("Set Pin %d to PWM ch:%d freq:%d duty:%d\n", pin, channel, freq, duty);
         }
     } else if (action == "analog") {
@@ -469,6 +496,11 @@ void ASHA::handleCommand(JsonVariant doc) {
     } else if (action == "ir_send") {
         int pin = doc["pin"];
         instance->wirelessSenders[pin]->send(doc);
+    } else if (action == "stop_pwm") {
+        int pin = doc["pin"];
+        ledcDetachPin(pin);
+        pinMode(pin, OUTPUT);
+        digitalWrite(pin, 0);
     }
 }
 
@@ -581,6 +613,12 @@ void ASHA::run() {
         while (xQueueReceive(pendingSubscriptions, &subTopic, 0) == pdTRUE) {
             mqttClient.subscribe(subTopic);
             free(subTopic);
+        }
+        PublishMessage publishMessage;
+        while (xQueueReceive(pendingPublish, &publishMessage, 0) == pdTRUE) {
+            mqttClient.publish(publishMessage.topic, publishMessage.message);
+            free(publishMessage.topic);
+            free(publishMessage.message);
         }
     }
 

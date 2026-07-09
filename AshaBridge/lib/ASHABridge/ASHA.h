@@ -40,6 +40,12 @@ struct RegisteredDevice {
     int pin;
 };
 
+// this structure holds details that a lua can use to publish
+struct PublishMessage {
+    char* topic;
+    char* message;
+};
+
 // ACTUATORS
 class ASHA_Actuators {
    public:
@@ -95,6 +101,7 @@ class ASHA {
         return instance;
     }
     void subscribeTopic(const char* topic);
+    void publishLuaMessage(PublishMessage publishMessage);
     const std::string gettopicPayload(const char* topic) {
         return topicPayloads[topic];
     }
@@ -110,6 +117,7 @@ class ASHA {
     static ASHA* instance;
     Lua ashaLua;
     QueueHandle_t luaScriptQueue;
+    QueueHandle_t pendingPublish;
     static void luaTask(void* param);
     unsigned long lastMqttActivity = 0;
     std::map<std::string, std::string> topicPayloads;
