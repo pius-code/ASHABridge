@@ -252,6 +252,14 @@ The IRremoteESP8266 library has dozens of protocol methods (`sendSAMSUNG`, `send
 
 The delay uses `millis()` internally and keeps calling `mqttClient.loop()` every 10ms so MQTT stays alive during the wait.
 
+### Stop PWM
+
+```json
+{ "pin": 21, "action": "stop_pwm" }
+```
+
+Detaches the LEDC peripheral from the pin and drives it LOW. Use this to fully silence a PWM device (buzzer, motor, fan). Setting `duty: 0` reduces output but the LEDC hardware signal keeps running — `stop_pwm` is the correct way to stop. Works in direct commands, batch sequences, and from Lua via `asha.command('{"pin": 21, "action": "stop_pwm"}')`.
+
 ### Lua Script
 
 ```json
@@ -277,14 +285,18 @@ The agent can send real-time Lua scripts that run persistent logic on the device
 
 ### Available Lua functions
 
-| Lua call                | What it does                                  |
-| ----------------------- | --------------------------------------------- |
-| `asha.command(jsonStr)` | Runs any command JSON through `handleCommand` |
-| `asha.digitalRead(pin)` | Returns 0 or 1                                |
-| `asha.analogRead(pin)`  | Returns 0–4095                                |
-| `asha.sleep(ms)`        | Non-blocking task delay                       |
-| `print(...)`            | Prints to Serial                              |
-| `millis()`              | Returns uptime in milliseconds                |
+| Lua call                       | What it does                                        |
+| ------------------------------ | --------------------------------------------------- |
+| `asha.command(jsonStr)`        | Runs any command JSON through `handleCommand`       |
+| `asha.digitalRead(pin)`        | Returns 0 or 1                                      |
+| `asha.analogRead(pin)`         | Returns 0–4095 (ADC pins GPIO 32–39 only)           |
+| `asha.ledcRead(channel)`       | Returns current PWM duty (0=off, >0=on, -1=uninit)  |
+| `asha.sleep(ms)`               | Non-blocking task delay; also the script kill point |
+| `asha.subscribe(topic)`        | Subscribe to an extra MQTT topic from Lua           |
+| `asha.readMessage(topic)`      | Returns last message on a subscribed topic          |
+| `asha.publish(topic, message)` | Publish a string to an MQTT topic (thread-safe)     |
+| `print(...)`                   | Prints to Serial                                    |
+| `millis()`                     | Returns uptime in milliseconds                      |
 
 ### Example script
 
@@ -336,6 +348,27 @@ while true do
   else
     asha.command('{"pin": 25, "action": "digital", "value": 0}')  -- alarm off
   end
+  asha.sleep(10)
+end
+```
+
+#### Publishing sensor data back to the backend
+
+`asha.publish(topic, message)` lets a Lua script push data upstream over MQTT without the agent needing to poll. The call is thread-safe — it queues the message on Core 0 and Core 1 drains it in `run()` before calling `mqttClient.publish()`.
+
+Convention: publish to `asha/sensorData/<ashaID>`. The backend subscribes to `asha/sensorData/+` (wildcard) and routes incoming data to the correct user by looking up the phone number tied to the ashaID.
+
+Change-detection pattern — only publish when the value actually changes:
+
+```lua
+local prev = -1
+while true do
+  local val = asha.analogRead(34)
+  if val ~= prev then
+    asha.publish("asha/sensorData/YOUR_ASHA_ID", tostring(val))
+    prev = val
+  end
+  asha.sleep(100)
 end
 ```
 

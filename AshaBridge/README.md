@@ -81,6 +81,16 @@ See [DOCS.md](DOCS.md) for the full API reference, command format, Lua scripting
 
 ---
 
+## What's new
+
+- **`stop_pwm` command** — fully silences a PWM device by detaching the LEDC peripheral and driving the pin LOW. Setting `duty: 0` leaves the hardware signal running; `stop_pwm` doesn't. Works in direct commands, batch sequences, and from Lua via `asha.command('{"pin": 21, "action": "stop_pwm"}')`.
+
+- **`asha.publish(topic, message)`** — Lua scripts can now push data upstream over MQTT. Thread-safe: messages are queued on Core 0 and published by Core 1 in `run()`. Use `asha/sensorData/<ashaID>` as the topic convention so the backend can route by ashaID.
+
+- **DNS fix** — `ASHA_WIFI::begin()` now sets DNS directly in lwIP via `dns_setserver()` using the `IP_ADDR4` macro. `WiFi.config()` does not reliably propagate DNS into lwIP on ESP32 (dual-stack build uses a union type that `IP4_ADDR` does not handle). This fixes DNS failures on networks where DHCP does not provide a DNS server (e.g. Windows Mobile Hotspot).
+
+---
+
 ## To-Do
 
 1. **RF wireless device support** — add command handlers for RF transmitters so the agent can control RF-controlled devices (e.g. remote-controlled sockets) the same way it controls IR and wired GPIO.
