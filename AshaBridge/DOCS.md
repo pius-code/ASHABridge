@@ -480,6 +480,51 @@ Benefits:
 
 ---
 
+## Build Notes
+
+### ESP32 Arduino Core 3.x Migration (pioarduino)
+
+The official PlatformIO `espressif32` platform is frozen on Arduino Core 2.x and will not receive Core 3.x support. To use Core 3.x, the project uses the community-maintained **pioarduino** fork:
+
+```ini
+platform = https://github.com/pioarduino/platform-espressif32/releases/download/stable/platform-espressif32.zip
+```
+
+**Why Core 3.x?** The LEDC (PWM) API changed completely. Core 2.x required explicit channel numbers that had to be tracked manually — two devices sharing a channel would conflict silently. Core 3.x manages channels internally; you only deal with pin numbers.
+
+| Core 2.x (old) | Core 3.x (new) |
+|---|---|
+| `ledcSetup(channel, freq, res)` | removed |
+| `ledcAttachPin(pin, channel)` | removed |
+| `ledcWrite(channel, duty)` | `ledcWrite(pin, duty)` |
+| `ledcRead(channel)` | `ledcRead(pin)` |
+| `ledcDetachPin(pin)` | `ledcDetach(pin)` |
+| — | `ledcAttach(pin, freq, res)` |
+
+### pioarduino Python Dependencies
+
+On first build, pioarduino tries to install its own Python dependencies into PlatformIO's virtual environment using `uv`. If the build fails with `Failed to install Python dependencies`, run this manually:
+
+```
+C:\Users\<you>\.platformio\penv\Scripts\pip.exe install certifi uv pioarduino littlefs-python fatfs-ng pyyaml rich-click zopfli intelhex rich cryptography ecdsa bitstring "reedsolo>=1.5.3,<1.8" esp-idf-size esp-coredump pyelftools
+```
+
+### Esp32Lua — Duplicate `main()` Fix
+
+The Esp32Lua library bundles the full Lua source tree, including `lua.c` (the Lua REPL) and `luac.c` (the Lua bytecode compiler). Both define a `main()` function because they are meant to be standalone desktop tools, not embedded components. On Core 2.x / GCC 8, the linker silently ignored the duplicate. On Core 3.x / GCC 14, duplicate symbol definitions are a hard linker error.
+
+**Fix:** `filter_lua.py` (in the project root) is a PlatformIO pre-build script that renames these two files to `.disabled` before the compiler sees them. It is registered in `platformio.ini`:
+
+```ini
+extra_scripts = pre:filter_lua.py
+```
+
+The `pre:` prefix is critical — without it the script runs after PlatformIO has already registered the files in its build graph, causing a SCons error even though the files were renamed.
+
+If you ever run `pio pkg update` or reinstall Esp32Lua, the files will be restored and the script will disable them again on the next build automatically.
+
+---
+
 ## Known Issues
 
 ### MQTT Silent Dropout — FIXED

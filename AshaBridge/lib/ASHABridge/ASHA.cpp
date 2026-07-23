@@ -7,6 +7,7 @@
 #include <Lua.h>
 #include <SPI.h>
 #include <WiFi.h>
+#include <WiFiClientSecure.h>
 #include <Wire.h>
 
 #include <lua/lua.hpp>
@@ -67,8 +68,8 @@ int lua_analogRead(lua_State* L) {
 }
 
 int lua_ledcRead(lua_State* L) {
-    int channel = luaL_checkinteger(L, 1);
-    int duty = ledcRead(channel);
+    int pin = luaL_checkinteger(L, 1);
+    int duty = ledcRead(pin);
     lua_pushinteger(L, duty);
     return 1;
 }
@@ -105,15 +106,10 @@ int lua_getVar(lua_State* L) {
     return 1;
 }
 
-static const luaL_Reg ashalib[] = {{"command", lua_ashaCommand},
-                                   {"analogRead", lua_analogRead},
-                                   {"digitalRead", lua_digitalRead},
-                                   {"ledcRead", lua_ledcRead},
-                                   {"sleep", lua_sleep},
-                                   {"subscribe", lua_subscribe},
-                                   {"readMessage", lua_getVar},
-                                   {"publishMessage", lua_publish},
-                                   {nullptr, nullptr}};
+static const luaL_Reg ashalib[] = {
+    {"command", lua_ashaCommand}, {"analogRead", lua_analogRead}, {"digitalRead", lua_digitalRead},
+    {"ledcRead", lua_ledcRead},   {"sleep", lua_sleep},           {"subscribe", lua_subscribe},
+    {"readMessage", lua_getVar},  {"publish", lua_publish},       {nullptr, nullptr}};
 
 int luaopen_asha(lua_State* L) {
     luaL_newlib(L, ashalib);
@@ -282,15 +278,15 @@ std::string ASHA::init(const std::string& ashaID) {
 
     if (WiFi.status() == WL_CONNECTED) {
         HTTPClient http;
-        WiFiClient client;
+        WiFiClientSecure client;
+        client.setInsecure();
 
         Serial.println("ASHA: Payload ready to be sent to the cloud.");
-        http.begin(
-            client,
-            "http://cba4-41-204-58-138.ngrok-free.app/api/v1/asha/verify_and_register_device");
+        http.begin(client,
+                   "https://mentor-buried-yukon-likewise.trycloudflare.com/api/v1/asha/"
+                   "verify_and_register_device");
 
         http.addHeader("Content-Type", "application/json");
-        http.addHeader("ngrok-skip-browser-warning", "69420");
 
         int httpResponseCode = http.POST(String(payload.c_str()));
 
@@ -312,7 +308,7 @@ std::string ASHA::init(const std::string& ashaID) {
     Serial.println("ASHA: Setting up MQTT connection ...");
 
     mqttClient.setClient(espClient);
-    mqttClient.setServer("10.0.90.83", 1883);
+    mqttClient.setServer("10.0.21.129", 1883);
     mqttClient.setBufferSize(16 * 1024);
     mqttClient.setCallback(mqttCallback);
     currentAshaID = ashaID;
@@ -382,12 +378,12 @@ void ASHA::handleCommand(JsonVariant doc) {
             Serial.printf("Set Pin %d to Digital %d\n", pin, value);
         }
     } else if (action == "pwm") {
-        int channel = doc["channel"];
         int value = doc["value"] | 0;
 
         if (value == -1) {
-            int ledc_duty = ledcRead(channel);
-            Serial.printf("Read PWM ch:%d ledc_duty:%d\n", channel, ledc_duty);
+            // -1 for read
+            int ledc_duty = ledcRead(pin);
+            Serial.printf("Read PWM pin:%d ledc_duty:%d\n", pin, ledc_duty);
 
             const char* corrID = doc["correlation_id"] | "";
             if (strlen(corrID) > 0) {
@@ -403,10 +399,9 @@ void ASHA::handleCommand(JsonVariant doc) {
         } else {
             int freq = doc["freq"];
             int duty = doc["duty"];
-            ledcSetup(channel, freq, 13);
-            ledcAttachPin(pin, channel);
-            ledcWrite(channel, duty >> 3);
-            Serial.printf("Set Pin %d to PWM ch:%d freq:%d duty:%d\n", pin, channel, freq, duty);
+            ledcAttach(pin, freq, 13);
+            ledcWrite(pin, duty >> 3);
+            Serial.printf("Set Pin %d to PWM freq:%d duty:%d\n", pin, freq, duty);
         }
     } else if (action == "analog") {
         int reading = analogRead(pin);
@@ -498,9 +493,9 @@ void ASHA::handleCommand(JsonVariant doc) {
         instance->wirelessSenders[pin]->send(doc);
     } else if (action == "stop_pwm") {
         int pin = doc["pin"];
-        ledcDetachPin(pin);
+        ledcDetach(pin);
         pinMode(pin, OUTPUT);
-        digitalWrite(pin, 0);
+        digitalWrite(pin, LOW);
     }
 }
 

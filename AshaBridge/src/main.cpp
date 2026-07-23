@@ -4,10 +4,6 @@ ASHA asha;
 
 void afterConnection() {
     Serial.println("ASHA: Internet Connected ");
-    pinMode(23, OUTPUT);
-    digitalWrite(23, 1);
-    delay(100);
-    digitalWrite(23, 0);
 }
 
 const char* ssid = "ashapius";
@@ -26,8 +22,15 @@ void setup() {
         asha.genericDev(DeviceCategory::Actuator, "Alarm Buzzer", BusType::PWM), 15);
     asha.asha_devices.addDevice(asha.genericDev(DeviceCategory::Actuator, "My fan", BusType::PWM),
                                 4);
+    asha.asha_devices.addDevice(
+        asha.genericDev(DeviceCategory::Actuator, "My Door. open_angle: 90 closed_angle: 0",
+                        BusType::PWM),
+        23);
+    asha.asha_devices.addDevice(
+        asha.genericDev(DeviceCategory::Sensor, "Daddy's bathroom tap sensor", BusType::Analog),
+        32);
 
-    asha.init("17fdab2c-1140-40e9-9572-16f802eb3b5e");
+    asha.init("957aab4d-fba2-421e-94b9-0191459fa408");
 }
 
 void loop() {
