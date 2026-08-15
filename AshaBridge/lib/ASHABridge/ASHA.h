@@ -33,11 +33,19 @@ struct DeviceType {
     BusType bus;              // digital or analog or I2C or PWM
 };
 
+struct SPIPins {
+    int cs;
+    int sck = 18;
+    int miso = 19;
+    int mosi = 23;
+};
+
 // the structure-type that holds all registereddevices like sensor etc
 struct RegisteredDevice {
     int id;
     DeviceType deviceType;
     int pin;
+    SPIPins spiPins;
 };
 
 // this structure holds details that a lua can use to publish
@@ -56,6 +64,8 @@ class ASHA_Actuators {
 class ASHA_Devices {
    public:
     int addDevice(const DeviceType& deviceType, int pin);
+    // overloaded for spi
+    int addDevice(const DeviceType& deviceType, int sck, int miso, int mosi, int cs);
     int getCount() const {
         return count;
     }
@@ -91,7 +101,7 @@ class ASHA {
    public:
     ASHA_WIFI asha_wifi;
     ASHA_Devices asha_devices;
-    std::string init(const std::string& ashaID);
+    std::string init(const std::string& projectName);
     DeviceType genericDev(DeviceCategory deviceCategory, const std::string& metadata,
                           BusType busType);
     void run();
@@ -110,7 +120,7 @@ class ASHA {
     }
 
    private:
-    WiFiClient espClient;
+    WiFiClientSecure espClient;
     PubSubClient mqttClient;
     std::string currentAshaID;
     unsigned long lastReconnectAttempt = 0;

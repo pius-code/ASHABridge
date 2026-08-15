@@ -1,3 +1,5 @@
+C:\Users\oblie\.platformio\penv\Scripts\pio.exe run -t compiledb
+
 # ASHABridge
 
 **ASHABridge** is an ESP32 firmware library that connects IoT hardware to an AI agent via MQTT. The agent can control pins, run batch sequences, and execute real-time Lua scripts on the device — all without reflashing.
@@ -12,11 +14,11 @@
 
 ## Platform Support
 
-| Platform       | Status                  |
-| -------------- | ----------------------- |
-| ESP32          | Supported               |
-| Raspberry Pi   | In progress             |
-| Arduino        | In progress             |
+| Platform     | Status      |
+| ------------ | ----------- |
+| ESP32        | Supported   |
+| Raspberry Pi | In progress |
+| Arduino      | In progress |
 
 ---
 
@@ -31,6 +33,7 @@ This project uses [PlatformIO](https://platformio.org/). Dependencies are declar
 Before building, open the following files and replace the placeholder values:
 
 **`src/main.cpp`** — your WiFi credentials and ASHA device ID:
+
 ```cpp
 const char* ssid     = "YOUR_WIFI_SSID";
 const char* password = "YOUR_WIFI_PASSWORD";
@@ -39,6 +42,7 @@ asha.init("YOUR_ASHA_ID");
 ```
 
 **`lib/ASHABridge/ASHA.cpp`** — your backend URL and MQTT broker:
+
 ```cpp
 http.begin(client, "YOUR_BACKEND_URL/api/v1/asha/verify_and_register_device");
 
@@ -82,6 +86,12 @@ See [DOCS.md](DOCS.md) for the full API reference, command format, Lua scripting
 ---
 
 ## What's new
+
+- **SPI support with custom pins** — `addDevice` is now overloaded for SPI devices. Pass `sck`, `miso`, `mosi`, and `cs` explicitly instead of a single GPIO pin. The first registered SPI device initializes `SPI.begin()`; subsequent devices share the bus and get their own CS line. SPI pin values are persisted to MongoDB and returned by `get_user_projects_and_devices` so the agent always knows the correct CS pin without guessing.
+
+- **`spi_read` command** — one-shot SPI read via MQTT. Send the register address bytes (with the device's read bit set per datasheet) in the `data` array; the ESP32 clocks out the response and publishes it back. Useful for diagnostics and one-off reads.
+
+- **`asha.spiTransfer(cs_pin, {bytes})` Lua API** — sends a byte array over SPI and returns the response bytes directly to Lua as a table, with no MQTT round-trip. Use this for continuous SPI polling (RFID card detection, sensor monitoring) inside `while` loops. Always pair with a state variable (`card_present = false`) to debounce — without it the script publishes on every tick while the sensor holds its state.
 
 - **`stop_pwm` command** — fully silences a PWM device by detaching the LEDC peripheral and driving the pin LOW. Setting `duty: 0` leaves the hardware signal running; `stop_pwm` doesn't. Works in direct commands, batch sequences, and from Lua via `asha.command('{"pin": 21, "action": "stop_pwm"}')`.
 

@@ -130,6 +130,30 @@ DeviceType genericDev(DeviceCategory category, const std::string& metadata, BusT
 | `metadata` | Any human-readable label — the agent uses this   |
 | `bus`      | `BusType::Digital`, `BusType::Analog`, `BusType::PWM`, `BusType::I2C`, `BusType::SPI`, `BusType::IR` |
 
+**SPI devices — custom pin overload:**
+
+For SPI devices, use the overloaded `addDevice` with four explicit pin numbers instead of a single GPIO. SPI requires four wires: clock, data in, data out, and a per-device chip select.
+
+```cpp
+// Signature: addDevice(deviceType, sck, miso, mosi, cs)
+asha.asha_devices.addDevice(
+    asha.genericDev(DeviceCategory::Sensor, "Daddy's RFID RC522", BusType::SPI),
+    25, 33, 27, 26);  // sck=25, miso=33, mosi=27, cs=26
+```
+
+| Parameter | Description |
+| --------- | ----------- |
+| `sck`     | SPI clock — driven by the ESP32 |
+| `miso`    | Master-In-Slave-Out: data flowing from device → ESP32 |
+| `mosi`    | Master-Out-Slave-In: data flowing from ESP32 → device |
+| `cs`      | Chip Select — pulled LOW by the ESP32 during a transaction; one line per device |
+
+> **GPIO 34 and 35 are input-only on ESP32** — never use them for MOSI or CS (both are outputs). Safe alternatives: GPIO 26, 27, 32, 33.
+
+The first SPI device registered calls `SPI.begin()` with its pins. Multiple SPI devices share the same SCK/MISO/MOSI bus but each gets its own CS line.
+
+The `sck`, `miso`, `mosi`, and `cs` values are persisted to MongoDB and returned by the backend's `get_user_projects_and_devices` endpoint — the agent reads them from there rather than guessing.
+
 The library automatically calls `pinMode` for Digital and SPI devices during `init`. For I2C, `Wire.begin()` is called once when the first I2C device is registered.
 
 ### 4. Init and Run
@@ -191,6 +215,34 @@ Set `value` to `-1` to read the pin instead of writing.
   "data": [1, 2, 3]
 }
 ```
+
+### SPI Read
+
+```json
+{
+  "action": "spi_read",
+  "cs_pin": 26,
+  "speed": 1000000,
+  "mode": 0,
+  "data": [183, 0]
+}
+```
+
+SPI is full-duplex — every byte you transmit, a byte comes back simultaneously. The `data` array is what the ESP32 sends; the device clocks back one response byte per sent byte.
+
+For reads, the first byte is the register address with the device's read bit set; remaining bytes are dummy `0x00` to clock the response out.
+
+**Read/write bit convention varies by device — always check the datasheet:**
+
+| Device | Convention |
+| ------ | ---------- |
+| RC522 RFID | Bit 7 = `1` means read. Register `0x37` → send `0xB7` (`0x37 \| 0x80`) |
+| Most ADC chips | Bit 7 = `0` means read |
+| Some devices | Separate command byte triggers the read entirely |
+
+**RC522 wiring sanity check:** send `[0xB7, 0x00]`. Response byte 2 should be `0x91` (v1.0) or `0x92` (v2.0). Any other value means a wiring problem.
+
+`spi_read` is for one-off reads. For continuous polling (e.g. RFID card detection), use `asha.spiTransfer()` in a Lua script — bytes return directly to Lua without an MQTT round-trip.
 
 ### IR Send (Universal Raw Mode)
 
@@ -294,6 +346,7 @@ The agent can send real-time Lua scripts that run persistent logic on the device
 | `asha.sleep(ms)`               | Non-blocking task delay; also the script kill point |
 | `asha.subscribe(topic)`        | Subscribe to an extra MQTT topic from Lua           |
 | `asha.readMessage(topic)`      | Returns last message on a subscribed topic          |
+| `asha.spiTransfer(cs_pin, {bytes})` | Sends bytes over SPI, returns table of received bytes (one per sent byte) |
 | `asha.publish(topic, message)` | Publish a string to an MQTT topic (thread-safe)     |
 | `print(...)`                   | Prints to Serial                                    |
 | `millis()`                     | Returns uptime in milliseconds                      |
@@ -351,6 +404,48 @@ while true do
   asha.sleep(10)
 end
 ```
+
+#### SPI device polling — RFID card detection
+
+For SPI sensors, use `asha.spiTransfer()` in a Lua script to poll continuously. It sends a byte array over SPI and returns the response bytes directly to Lua — no MQTT round-trip, no async callback.
+
+```lua
+local rx = asha.spiTransfer(cs_pin, {byte1, byte2, ...})
+-- rx[1] is the byte received while sending byte1
+-- rx[2] is the byte received while sending byte2
+-- ...and so on
+```
+
+**Critical — always debounce with a state variable.** Without it, the script publishes on every loop tick while the card is held on the reader, flooding the agent with hundreds of duplicate messages.
+
+```lua
+local cs = 26       -- cs_pin from get_user_projects_and_devices()
+local light = 18    -- actuator pin
+local card_present = false
+
+while true do
+    -- Replace with the card-presence detection bytes for your device.
+    -- For RC522: search the datasheet for REQA/ComIrqReg sequence, or use web search.
+    local rx = asha.spiTransfer(cs, {<detection bytes>})
+    local detected = <your condition on rx>
+
+    if detected and not card_present then
+        card_present = true    -- card just ARRIVED → fire exactly once
+        asha.command('{"pin":' .. light .. ',"action":"digital","value":1}')
+        asha.publish("asha/ashaSensor/YOUR_ASHA_ID", "Someone scanned an RFID card — light turned on")
+    elseif not detected and card_present then
+        card_present = false   -- card just LEFT → reset state
+        asha.command('{"pin":' .. light .. ',"action":"digital","value":0}')
+        asha.publish("asha/ashaSensor/YOUR_ASHA_ID", "RFID card removed — light off")
+    end
+
+    asha.sleep(200)
+end
+```
+
+The `card_present` flag makes the notification fire exactly once when the card arrives, and once when it leaves. The same pattern applies to any SPI sensor that can hold state across multiple loop ticks — proximity sensors, door sensors, stable thresholds.
+
+**Why not `spi_read` via MQTT for this?** `handleCommand` publishes the raw bytes back to MQTT but returns nothing to Lua. The script would have to subscribe and wait for the response — adding latency and complexity. `spiTransfer` returns bytes directly onto the Lua stack, so the script can react inline without leaving the loop.
 
 #### Publishing sensor data back to the backend
 

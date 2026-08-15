@@ -106,10 +106,42 @@ int lua_getVar(lua_State* L) {
     return 1;
 }
 
-static const luaL_Reg ashalib[] = {
-    {"command", lua_ashaCommand}, {"analogRead", lua_analogRead}, {"digitalRead", lua_digitalRead},
-    {"ledcRead", lua_ledcRead},   {"sleep", lua_sleep},           {"subscribe", lua_subscribe},
-    {"readMessage", lua_getVar},  {"publish", lua_publish},       {nullptr, nullptr}};
+// sends a table of bytes over SPI and returns a table of bytes received
+// usage: local rx = asha.spiTransfer(cs_pin, {byte1, byte2, ...})
+int lua_spiTransfer(lua_State* L) {
+    int cs_pin = luaL_checkinteger(L, 1);
+    luaL_checktype(L, 2, LUA_TTABLE);
+    int len = lua_rawlen(L, 2);
+
+    SPI.beginTransaction(SPISettings(1000000, MSBFIRST, SPI_MODE0));
+    digitalWrite(cs_pin, LOW);
+
+    lua_newtable(L);
+    for (int i = 1; i <= len; i++) {
+        lua_rawgeti(L, 2, i);
+        byte tx = (byte)lua_tointeger(L, -1);
+        lua_pop(L, 1);
+        byte rx = SPI.transfer(tx);
+        lua_pushinteger(L, rx);
+        lua_rawseti(L, -2, i);
+    }
+
+    digitalWrite(cs_pin, HIGH);
+    SPI.endTransaction();
+
+    return 1;
+}
+
+static const luaL_Reg ashalib[] = {{"command", lua_ashaCommand},
+                                   {"analogRead", lua_analogRead},
+                                   {"digitalRead", lua_digitalRead},
+                                   {"ledcRead", lua_ledcRead},
+                                   {"sleep", lua_sleep},
+                                   {"subscribe", lua_subscribe},
+                                   {"readMessage", lua_getVar},
+                                   {"publish", lua_publish},
+                                   {"spiTransfer", lua_spiTransfer},
+                                   {nullptr, nullptr}};
 
 int luaopen_asha(lua_State* L) {
     luaL_newlib(L, ashalib);
@@ -172,7 +204,22 @@ int ASHA_Devices::addDevice(const DeviceType& deviceType, int pin) {
     }
 
     int newId = count + 1;
-    devices[count] = {newId, deviceType, pin};
+    devices[count] = {newId, deviceType, pin, {}};
+    count++;
+
+    return newId;
+}
+
+int ASHA_Devices::addDevice(const DeviceType& deviceType, int sck, int miso, int mosi, int cs) {
+    if (count >= MAX_DEVICES) return -1;
+
+    int newId = count + 1;
+    SPIPins pins;
+    pins.sck = sck;
+    pins.miso = miso;
+    pins.mosi = mosi;
+    pins.cs = cs;
+    devices[count] = {newId, deviceType, 0, pins};
     count++;
 
     return newId;
@@ -198,11 +245,12 @@ DeviceType ASHA::genericDev(DeviceCategory deviceCategory, const std::string& me
 // * ============================================================
 // * INIT — register devices with cloud, connect MQTT, start Lua task
 // * ============================================================
-std::string ASHA::init(const std::string& ashaID) {
+std::string ASHA::init(const std::string& projectName) {
     instance = this;
     JsonDocument doc;
 
-    doc["auth_id"] = ashaID;
+    doc["project_name"] = projectName;
+    doc["mac_address"] = WiFi.macAddress().c_str();
     JsonArray jsonDevices = doc["devices"].to<JsonArray>();
 
     bool i2cInitialized = false;
@@ -238,6 +286,10 @@ std::string ASHA::init(const std::string& ashaID) {
                 break;
             case BusType::SPI:
                 deviceObj["bus"] = "SPI";
+                deviceObj["sck"] = rd.spiPins.sck;
+                deviceObj["miso"] = rd.spiPins.miso;
+                deviceObj["mosi"] = rd.spiPins.mosi;
+                deviceObj["cs"] = rd.spiPins.cs;
                 break;
             case BusType::IR:
                 deviceObj["bus"] = "IR";
@@ -258,11 +310,11 @@ std::string ASHA::init(const std::string& ashaID) {
             }
         } else if (rd.deviceType.bus == BusType::SPI) {
             if (!spiInitialized) {
-                SPI.begin();
+                SPI.begin(rd.spiPins.sck, rd.spiPins.miso, rd.spiPins.mosi, rd.spiPins.cs);
                 spiInitialized = true;
             }
-            pinMode(rd.pin, OUTPUT);
-            digitalWrite(rd.pin, HIGH);
+            pinMode(rd.spiPins.cs, OUTPUT);
+            digitalWrite(rd.spiPins.cs, HIGH);
         } else if (rd.deviceType.bus == BusType::IR) {
             wirelessSenders[rd.pin] = new IRSender(rd.pin);
         }
@@ -283,7 +335,7 @@ std::string ASHA::init(const std::string& ashaID) {
 
         Serial.println("ASHA: Payload ready to be sent to the cloud.");
         http.begin(client,
-                   "https://mentor-buried-yukon-likewise.trycloudflare.com/api/v1/asha/"
+                   "https://anywhere-encyclopedia-intention-grade.trycloudflare.com/api/v1/asha/"
                    "verify_and_register_device");
 
         http.addHeader("Content-Type", "application/json");
@@ -294,7 +346,12 @@ std::string ASHA::init(const std::string& ashaID) {
             Serial.print("HTTP Response code: ");
             Serial.println(httpResponseCode);
             String response = http.getString();
-            Serial.println(response);
+            JsonDocument doc;
+            deserializeJson(doc, response);
+            currentAshaID = doc["asha_id"].as<std::string>();
+            const char* code = doc["pairing_code"];
+            Serial.println("ASHA: Pairing code: ");
+            Serial.println(code);
         } else {
             Serial.print("Error sending request. Error code: ");
             Serial.println(httpResponseCode);
@@ -307,11 +364,11 @@ std::string ASHA::init(const std::string& ashaID) {
     }
     Serial.println("ASHA: Setting up MQTT connection ...");
 
+    espClient.setInsecure();
     mqttClient.setClient(espClient);
-    mqttClient.setServer("10.0.21.129", 1883);
+    mqttClient.setServer("d1fb95ffc6654d6e98effc66d26fed74.s1.eu.hivemq.cloud", 8883);
     mqttClient.setBufferSize(16 * 1024);
     mqttClient.setCallback(mqttCallback);
-    currentAshaID = ashaID;
 
     // LUA -------------------------------------------------------------------------------
     ashaLua.addModule("asha", luaopen_asha);
@@ -440,16 +497,10 @@ void ASHA::handleCommand(JsonVariant doc) {
         int addr = doc["addr"];
         int reg = doc["reg"];
         int len = doc["len"];
-
-        // Step 1: tell device which register to read from
         Wire.beginTransmission(addr);
         Wire.write(reg);
-        Wire.endTransmission(false);  // false = don't release the bus yet
-
-        // Step 2: request bytes back
+        Wire.endTransmission(false);
         Wire.requestFrom(addr, len);
-
-        // Step 3: collect the bytes
         String result = "I2C read → addr:0x" + String(addr, HEX) + " data:[";
         for (int i = 0; i < len; i++) {
             if (Wire.available()) {
@@ -478,6 +529,30 @@ void ASHA::handleCommand(JsonVariant doc) {
         SPI.endTransaction();
 
         Serial.printf("SPI write success → cs_pin:%d\n", cs_pin);
+    } else if (action == "spi_read") {
+        int cs_pin = doc["cs_pin"];
+        long speed = doc["speed"] | 1000000;
+        int spi_mode = doc["mode"] | SPI_MODE0;
+        JsonArray data = doc["data"];
+
+        pinMode(cs_pin, OUTPUT);
+        SPI.beginTransaction(SPISettings(speed, MSBFIRST, spi_mode));
+        digitalWrite(cs_pin, LOW);
+
+        String result = "SPI read → cs:" + String(cs_pin) + " rx:[";
+        bool first = true;
+        for (byte b : data) {
+            byte rx = SPI.transfer(b);
+            if (!first) result += ",";
+            result += String(rx);
+            first = false;
+        }
+        result += "]";
+
+        digitalWrite(cs_pin, HIGH);
+        SPI.endTransaction();
+
+        Serial.println(result);
     } else if (action == "uart_write") {
         int baud = doc["baud"] | 9600;
         int tx_pin = doc["tx_pin"] | 17;
@@ -574,7 +649,7 @@ void ASHA::reconnectMQTT() {
     Serial.print("Attempting MQTT connection...");
     String clientId = "ASHA_B_DEVICE-";
     clientId += String(random(0xffff), HEX);
-    if (mqttClient.connect(clientId.c_str())) {
+    if (mqttClient.connect(clientId.c_str(), "ashaESP", "ashatheworldtothefuture")) {
         Serial.println("connected to MQTT Broker!");
         lastMqttActivity = millis();
         String topic = "asha/commands/" + String(currentAshaID.c_str());
