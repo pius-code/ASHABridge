@@ -332,10 +332,13 @@ std::string ASHA::init(const std::string& projectName) {
         HTTPClient http;
         WiFiClientSecure client;
         client.setInsecure();
+        client.setTimeout(15);
 
         Serial.println("ASHA: Payload ready to be sent to the cloud.");
+        http.setTimeout(15000);
+        http.setFollowRedirects(HTTPC_STRICT_FOLLOW_REDIRECTS);
         http.begin(client,
-                   "https://anywhere-encyclopedia-intention-grade.trycloudflare.com/api/v1/asha/"
+                   "https://ashabackend-soft-waterfall-3685.fly.dev/api/v1/asha/"
                    "verify_and_register_device");
 
         http.addHeader("Content-Type", "application/json");
