@@ -101,6 +101,23 @@ class ASHA {
    public:
     ASHA_WIFI asha_wifi;
     ASHA_Devices asha_devices;
+
+    // WiFi
+    void connectWiFi(const char* ssid, const char* pwd, void (*onConnectCallback)() = nullptr);
+
+    // Device registration
+    int addDevice(DeviceCategory category, const std::string& metadata, BusType bus, int pin);
+    int addDevice(DeviceCategory category, const std::string& metadata, BusType bus,
+                  int sck, int miso, int mosi, int cs);
+    int addDevice(const DeviceType& deviceType, int pin);
+    int addDevice(const DeviceType& deviceType, int sck, int miso, int mosi, int cs);
+
+    // Convenience shorthand helpers
+    int addActuator(const std::string& metadata, BusType bus, int pin);
+    int addActuator(const std::string& metadata, BusType bus, int sck, int miso, int mosi, int cs);
+    int addSensor(const std::string& metadata, BusType bus, int pin);
+    int addSensor(const std::string& metadata, BusType bus, int sck, int miso, int mosi, int cs);
+
     std::string init(const std::string& projectName);
     DeviceType genericDev(DeviceCategory deviceCategory, const std::string& metadata,
                           BusType busType);

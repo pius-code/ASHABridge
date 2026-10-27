@@ -242,6 +242,46 @@ DeviceType ASHA::genericDev(DeviceCategory deviceCategory, const std::string& me
     return dt;
 }
 
+void ASHA::connectWiFi(const char* ssid, const char* pwd, void (*onConnectCallback)()) {
+    if (onConnectCallback != nullptr) {
+        asha_wifi.onConnect(onConnectCallback);
+    }
+    asha_wifi.begin(ssid, pwd);
+}
+
+int ASHA::addDevice(DeviceCategory category, const std::string& metadata, BusType bus, int pin) {
+    return asha_devices.addDevice(genericDev(category, metadata, bus), pin);
+}
+
+int ASHA::addDevice(DeviceCategory category, const std::string& metadata, BusType bus,
+                    int sck, int miso, int mosi, int cs) {
+    return asha_devices.addDevice(genericDev(category, metadata, bus), sck, miso, mosi, cs);
+}
+
+int ASHA::addDevice(const DeviceType& deviceType, int pin) {
+    return asha_devices.addDevice(deviceType, pin);
+}
+
+int ASHA::addDevice(const DeviceType& deviceType, int sck, int miso, int mosi, int cs) {
+    return asha_devices.addDevice(deviceType, sck, miso, mosi, cs);
+}
+
+int ASHA::addActuator(const std::string& metadata, BusType bus, int pin) {
+    return addDevice(DeviceCategory::Actuator, metadata, bus, pin);
+}
+
+int ASHA::addActuator(const std::string& metadata, BusType bus, int sck, int miso, int mosi, int cs) {
+    return addDevice(DeviceCategory::Actuator, metadata, bus, sck, miso, mosi, cs);
+}
+
+int ASHA::addSensor(const std::string& metadata, BusType bus, int pin) {
+    return addDevice(DeviceCategory::Sensor, metadata, bus, pin);
+}
+
+int ASHA::addSensor(const std::string& metadata, BusType bus, int sck, int miso, int mosi, int cs) {
+    return addDevice(DeviceCategory::Sensor, metadata, bus, sck, miso, mosi, cs);
+}
+
 // * ============================================================
 // * INIT — register devices with cloud, connect MQTT, start Lua task
 // * ============================================================

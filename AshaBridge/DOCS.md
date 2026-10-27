@@ -98,30 +98,36 @@ void afterConnection() {
 }
 
 void setup() {
-    asha.asha_wifi.onConnect(afterConnection);
-    asha.asha_wifi.begin(ssid, password);
+    asha.connectWiFi(ssid, password, afterConnection);
     // ...
 }
 ```
 
-### 3. Adding Devices
-
-Call `addDevice` for each piece of hardware before calling `init`. Each device needs a type (built with `genericDev`) and the GPIO pin it is on.
-
+You can also pass `nullptr` or omit `afterConnection` if you don't need a callback:
 ```cpp
-asha.asha_devices.addDevice(
-    asha.genericDev(DeviceCategory::Sensor, "My water sensor", BusType::Analog), 34);
-
-asha.asha_devices.addDevice(
-    asha.genericDev(DeviceCategory::Actuator, "My light", BusType::PWM), 18);
-
-asha.asha_devices.addDevice(
-    asha.genericDev(DeviceCategory::Actuator, "My buzzer", BusType::PWM), 23);
+asha.connectWiFi(ssid, password);
 ```
 
-**`genericDev` signature:**
+### 3. Adding Devices
+
+Call `addDevice` directly on `asha` for each piece of hardware before calling `init`:
+
 ```cpp
-DeviceType genericDev(DeviceCategory category, const std::string& metadata, BusType bus);
+asha.addDevice(DeviceCategory::Sensor, "My water sensor", BusType::Analog, 34);
+asha.addDevice(DeviceCategory::Actuator, "My light", BusType::PWM, 18);
+asha.addDevice(DeviceCategory::Actuator, "My buzzer", BusType::PWM, 23);
+```
+
+Alternatively, use shorthand helpers for sensors and actuators:
+```cpp
+asha.addSensor("My water sensor", BusType::Analog, 34);
+asha.addActuator("My light", BusType::PWM, 18);
+asha.addActuator("My buzzer", BusType::PWM, 23);
+```
+
+**`addDevice` signature:**
+```cpp
+int addDevice(DeviceCategory category, const std::string& metadata, BusType bus, int pin);
 ```
 
 | Parameter  | Options                                          |
@@ -129,16 +135,16 @@ DeviceType genericDev(DeviceCategory category, const std::string& metadata, BusT
 | `category` | `DeviceCategory::Sensor`, `DeviceCategory::Actuator` |
 | `metadata` | Any human-readable label — the agent uses this   |
 | `bus`      | `BusType::Digital`, `BusType::Analog`, `BusType::PWM`, `BusType::I2C`, `BusType::SPI`, `BusType::IR` |
+| `pin`      | GPIO pin number                                  |
 
 **SPI devices — custom pin overload:**
 
 For SPI devices, use the overloaded `addDevice` with four explicit pin numbers instead of a single GPIO. SPI requires four wires: clock, data in, data out, and a per-device chip select.
 
 ```cpp
-// Signature: addDevice(deviceType, sck, miso, mosi, cs)
-asha.asha_devices.addDevice(
-    asha.genericDev(DeviceCategory::Sensor, "Daddy's RFID RC522", BusType::SPI),
-    25, 33, 27, 26);  // sck=25, miso=33, mosi=27, cs=26
+// Signature: addDevice(category, metadata, bus, sck, miso, mosi, cs)
+asha.addDevice(DeviceCategory::Sensor, "Daddy's RFID RC522", BusType::SPI,
+               25, 33, 27, 26);  // sck=25, miso=33, mosi=27, cs=26
 ```
 
 | Parameter | Description |

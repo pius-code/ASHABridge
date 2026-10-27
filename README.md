@@ -60,16 +60,12 @@ In `setup()`, register each piece of hardware with `addDevice` before calling `i
 ASHA asha;
 
 void setup() {
-    asha.asha_wifi.onConnect([]() {
+    asha.connectWiFi("YOUR_WIFI_SSID", "YOUR_WIFI_PASSWORD", []() {
         Serial.println("Connected!");
     });
-    asha.asha_wifi.begin("YOUR_WIFI_SSID", "YOUR_WIFI_PASSWORD");
 
-    asha.asha_devices.addDevice(
-        asha.genericDev(DeviceCategory::Sensor, "My water sensor", BusType::Analog), 34);
-
-    asha.asha_devices.addDevice(
-        asha.genericDev(DeviceCategory::Actuator, "My light", BusType::PWM), 18);
+    asha.addDevice(DeviceCategory::Sensor, "My water sensor", BusType::Analog, 34);
+    asha.addDevice(DeviceCategory::Actuator, "My light", BusType::PWM, 18);
 
     asha.init("YOUR_ASHA_ID");
 }
