@@ -18,7 +18,6 @@ void setup() {
     asha.addDevice(DeviceCategory::Actuator, "side door 90° open 0° close", BusType::PWM, 18);
     asha.addDevice(DeviceCategory::Actuator,
                    "buzzer - you can use as security alarm or door bell", BusType::PWM, 19);
-
     asha.init("Pius House");
 }
 
