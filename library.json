@@ -1,6 +1,6 @@
 {
   "name": "ASHA",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Firmware bridge connecting ESP32 hardware to the ASHA cloud agent platform.",
   "keywords": [
     "esp32",
@@ -30,10 +30,6 @@
     "knolleary/PubSubClient": "^2.8",
     "fischer-simon/Esp32Lua": "^5.4.7",
     "crankyoldgit/IRremoteESP8266": "^2.9.0"
-  },
-  "examples": "examples/*/*.ino",
-  "export": {
-    "exclude": ["AshaBridge", ".vscode", ".clangd", ".claude", ".clang-format"]
   },
   "examples": "examples/*/*.ino",
   "export": {
